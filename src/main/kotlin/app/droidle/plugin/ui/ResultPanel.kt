@@ -65,7 +65,7 @@ class ResultPanel(
 
             add(JPanel(FlowLayout(FlowLayout.CENTER)).apply {
                 add(JButton("Droidle.app'te Gör →").apply {
-                    addActionListener { BrowserUtil.browse("https://droidle.app") }
+                    addActionListener { BrowserUtil.browse("https://droidle.vercel.app") }
                 })
             })
             add(Box.createVerticalStrut(8))

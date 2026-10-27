@@ -4,9 +4,11 @@ import app.droidle.plugin.model.DailyQuizResponse
 import app.droidle.plugin.model.Question
 import app.droidle.plugin.model.VerifyRequest
 import app.droidle.plugin.model.VerifyResponse
+import app.droidle.plugin.settings.DroidleSettingsState
 import app.droidle.plugin.state.StateManager
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
@@ -34,14 +36,22 @@ class DroidleService {
     private val baseUrl: String
         get() = service<StateManager>().settings.apiBaseUrl
 
+    private fun Request.Builder.applyCommonHeaders(): Request.Builder {
+        header("Accept", "application/json")
+        header("Content-Type", "application/json")
+        // Vercel Deployment Protection bypass (geliştirme ortamı için)
+        val bypass = DroidleSettingsState.getInstance().vercelBypassSecret
+        if (bypass.isNotBlank()) header("x-vercel-protection-bypass", bypass)
+        return this
+    }
+
     @Throws(IOException::class)
     fun fetchDailyQuiz(): List<Question> {
         val token = service<StateManager>().getAuthToken()
         val url = "$baseUrl/api/daily-quiz"
         val requestBuilder = Request.Builder()
             .url(url)
-            .header("Accept", "application/json")
-            .header("Content-Type", "application/json")
+            .applyCommonHeaders()
             .get()
         if (token != null) requestBuilder.header("Authorization", "Bearer $token")
 
@@ -49,7 +59,7 @@ class DroidleService {
         val body = response.body?.string() ?: ""
 
         if (!response.isSuccessful) {
-            throw IOException("HTTP ${response.code} — ${body.take(200)}")
+            throw IOException("HTTP ${response.code}: ${body.take(300)}")
         }
 
         val trimmed = body.trim()
@@ -57,14 +67,12 @@ class DroidleService {
             throw IOException("Sunucu boş yanıt döndürdü (HTTP ${response.code}). URL: $url")
         }
         if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
-            throw IOException("Beklenmeyen yanıt formatı (ilk 100 karakter): ${trimmed.take(100)}")
+            throw IOException("HTML yanıtı alındı — Vercel Protection aktif olabilir. İlk 200 karakter: ${trimmed.take(200)}")
         }
 
         return if (trimmed.startsWith("[")) {
-            // Eski format: bare array
-            json.decodeFromString(kotlinx.serialization.builtins.ListSerializer(Question.serializer()), trimmed)
+            json.decodeFromString(ListSerializer(Question.serializer()), trimmed)
         } else {
-            // Yeni format: { questions: [...], ... } wrapper
             val wrapper = json.decodeFromString(DailyQuizResponse.serializer(), trimmed)
             if (wrapper.questions.isEmpty()) throw IOException("Bugün için soru bulunamadı.")
             wrapper.questions
@@ -75,17 +83,17 @@ class DroidleService {
     fun verifyAnswer(questionId: String, selectedOption: String): VerifyResponse {
         val token = service<StateManager>().getAuthToken()
         val payload = json.encodeToString(VerifyRequest.serializer(), VerifyRequest(questionId, selectedOption))
-        val body = payload.toRequestBody("application/json".toMediaType())
+        val requestBody = payload.toRequestBody("application/json".toMediaType())
 
         val requestBuilder = Request.Builder()
             .url("$baseUrl/api/verify-answer")
-            .header("Accept", "application/json")
-            .post(body)
+            .applyCommonHeaders()
+            .post(requestBody)
         if (token != null) requestBuilder.header("Authorization", "Bearer $token")
 
         val response = client.newCall(requestBuilder.build()).execute()
         val responseBody = response.body?.string() ?: ""
-        if (!response.isSuccessful) throw IOException("API error ${response.code}: ${responseBody.take(200)}")
+        if (!response.isSuccessful) throw IOException("API error ${response.code}: ${responseBody.take(300)}")
         if (responseBody.trim().isEmpty()) throw IOException("Sunucu boş yanıt döndürdü (verify)")
 
         return json.decodeFromString(VerifyResponse.serializer(), responseBody)

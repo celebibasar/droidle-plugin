@@ -12,7 +12,7 @@ import java.time.format.DateTimeFormatter
 private val DATE_FMT = DateTimeFormatter.ISO_LOCAL_DATE
 
 data class DroidleSettings(
-    val apiBaseUrl: String = "https://droidle.app"
+    val apiBaseUrl: String = "https://droidle.vercel.app"
 )
 
 @Service(Service.Level.APP)
@@ -21,7 +21,7 @@ class StateManager {
     private val props = PropertiesComponent.getInstance()
 
     var settings: DroidleSettings
-        get() = DroidleSettings(apiBaseUrl = props.getValue(KEY_API_URL, "https://droidle.app"))
+        get() = DroidleSettings(apiBaseUrl = props.getValue(KEY_API_URL, "https://droidle.vercel.app"))
         set(value) { props.setValue(KEY_API_URL, value.apiBaseUrl) }
 
     val currentStreak: Int get() = props.getInt(KEY_STREAK, 0)

@@ -1,12 +1,12 @@
 package app.droidle.plugin.settings
 
-import app.droidle.plugin.state.StateManager
+import com.intellij.openapi.components.service
 import com.intellij.openapi.options.Configurable
-import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPasswordField
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.FormBuilder
+import javax.swing.JCheckBox
 import javax.swing.JComponent
 import javax.swing.JPanel
 
@@ -14,46 +14,57 @@ class DroidleSettingsConfigurable : Configurable {
 
     private val apiUrlField = JBTextField()
     private val tokenField = JBPasswordField()
-    private val badgeCheckbox = JBCheckBox("Quiz tamamlanmadıysa Tool Window'da rozet göster")
-    private var panel: JPanel? = null
+    private val bypassField = JBPasswordField()
+    private val badgeCheckbox = JCheckBox("Tamamlanmamış quiz için rozet göster")
 
-    override fun getDisplayName(): String = "Droidle"
+    override fun getDisplayName() = "Droidle"
 
     override fun createComponent(): JComponent {
         val state = DroidleSettingsState.getInstance()
         apiUrlField.text = state.apiBaseUrl
         badgeCheckbox.isSelected = state.showBadgeOnIncomplete
-        StateManager.getInstance().getAuthToken()?.let { tokenField.text = it }
+        bypassField.text = state.vercelBypassSecret
 
-        panel = FormBuilder.createFormBuilder()
-            .addLabeledComponent(JBLabel("API Base URL:"), apiUrlField)
+        // GitHub token'ı PasswordSafe'den oku
+        val sm = service<app.droidle.plugin.state.StateManager>()
+        tokenField.text = sm.getAuthToken() ?: ""
+
+        return FormBuilder.createFormBuilder()
+            .addLabeledComponent(JBLabel("API URL:"), apiUrlField)
+            .addLabeledComponent(JBLabel("Vercel Bypass Secret:"), bypassField)
+            .addTooltip("Vercel Deployment Protection aktifse buraya bypass secret gir")
             .addLabeledComponent(JBLabel("GitHub Token (opsiyonel):"), tokenField)
             .addComponent(badgeCheckbox)
             .addComponentFillVertically(JPanel(), 0)
             .panel
-
-        return panel!!
     }
 
     override fun isModified(): Boolean {
         val state = DroidleSettingsState.getInstance()
+        val sm = service<app.droidle.plugin.state.StateManager>()
         return apiUrlField.text != state.apiBaseUrl ||
-               badgeCheckbox.isSelected != state.showBadgeOnIncomplete
+                badgeCheckbox.isSelected != state.showBadgeOnIncomplete ||
+                String(bypassField.password) != state.vercelBypassSecret ||
+                String(tokenField.password) != (sm.getAuthToken() ?: "")
     }
 
     override fun apply() {
         val state = DroidleSettingsState.getInstance()
         state.apiBaseUrl = apiUrlField.text.trimEnd('/')
         state.showBadgeOnIncomplete = badgeCheckbox.isSelected
+        state.vercelBypassSecret = String(bypassField.password)
 
-        val newToken = String(tokenField.password).trim()
-        if (newToken.isNotEmpty()) StateManager.getInstance().saveAuthToken(newToken)
-        else StateManager.getInstance().clearAuthToken()
+        val sm = service<app.droidle.plugin.state.StateManager>()
+        val token = String(tokenField.password)
+        if (token.isBlank()) sm.clearAuthToken() else sm.saveAuthToken(token)
     }
 
     override fun reset() {
         val state = DroidleSettingsState.getInstance()
         apiUrlField.text = state.apiBaseUrl
         badgeCheckbox.isSelected = state.showBadgeOnIncomplete
+        bypassField.text = state.vercelBypassSecret
+        val sm = service<app.droidle.plugin.state.StateManager>()
+        tokenField.text = sm.getAuthToken() ?: ""
     }
 }

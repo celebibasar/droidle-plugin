@@ -6,8 +6,10 @@ import com.intellij.util.xmlb.XmlSerializerUtil
 @Service(Service.Level.APP)
 @State(name = "DroidleSettings", storages = [Storage("droidle.xml")])
 class DroidleSettingsState : PersistentStateComponent<DroidleSettingsState> {
-    var apiBaseUrl: String = "https://droidle.app"
+    var apiBaseUrl: String = "https://droidle.vercel.app"
     var showBadgeOnIncomplete: Boolean = true
+    /** Vercel Deployment Protection bypass secret (opsiyonel) */
+    var vercelBypassSecret: String = ""
 
     override fun getState(): DroidleSettingsState = this
     override fun loadState(state: DroidleSettingsState) = XmlSerializerUtil.copyBean(state, this)
