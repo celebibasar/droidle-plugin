@@ -1,5 +1,6 @@
 package app.droidle.plugin
 
+import app.droidle.plugin.auth.DroidleLocalAuthServer
 import app.droidle.plugin.state.StateManager
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
@@ -10,11 +11,16 @@ import kotlinx.coroutines.delay
 
 /**
  * IDE her proje açılışında çalışır.
- * O gün quiz gösterilmediyse kullanıcıya balloon bildirim gönderir.
+ * 1. Local auth server'ı başlatır (localhost:62330) — web app token gönderebilsin
+ * 2. O gün quiz gösterilmediyse kullanıcıya balloon bildirim gönderir.
  */
 class DroidleStartupActivity : ProjectActivity {
 
     override suspend fun execute(project: Project) {
+        // Start the local HTTP server for web→plugin token handoff
+        // (no-op if already running or port is in use)
+        DroidleLocalAuthServer.getInstance().start()
+
         // IDE tam yüklensin diye kısa bekle
         delay(3_000)
 

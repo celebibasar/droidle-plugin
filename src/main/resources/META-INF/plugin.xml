@@ -11,7 +11,10 @@
     ]]></description>
 
     <change-notes><![CDATA[
-        <ul><li>0.1.0 — Initial release</li></ul>
+        <ul>
+            <li>0.2.0 — GitHub login sync, TR/EN language toggle, source links in explanations</li>
+            <li>0.1.0 — Initial release</li>
+        </ul>
     ]]></change-notes>
 
     <depends>com.intellij.modules.platform</depends>
@@ -40,15 +43,16 @@
         <applicationService serviceImplementation="app.droidle.plugin.state.StateManager"/>
         <applicationService serviceImplementation="app.droidle.plugin.service.DroidleService"/>
         <applicationService serviceImplementation="app.droidle.plugin.settings.DroidleSettingsState"/>
+        <applicationService serviceImplementation="app.droidle.plugin.auth.DroidleLocalAuthServer"/>
 
-        <!-- Günlük açılış bildirimi -->
+        <!-- Notifications -->
         <notificationGroup
             id="Droidle"
             displayType="BALLOON"
             isLogByDefault="false"
         />
 
-        <!-- Startup: her proje açılışında çalışır -->
+        <!-- Startup: runs on every project open -->
         <postStartupActivity implementation="app.droidle.plugin.DroidleStartupActivity"/>
 
     </extensions>

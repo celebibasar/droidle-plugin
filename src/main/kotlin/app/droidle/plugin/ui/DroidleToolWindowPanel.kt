@@ -1,7 +1,10 @@
 package app.droidle.plugin.ui
 
+import app.droidle.plugin.auth.DroidleAuthListener
+import app.droidle.plugin.auth.DroidleLocalAuthServer
 import app.droidle.plugin.model.Question
 import app.droidle.plugin.service.DroidleService
+import app.droidle.plugin.state.AppLanguage
 import app.droidle.plugin.state.StateManager
 import com.intellij.icons.AllIcons
 import com.intellij.ide.BrowserUtil
@@ -34,18 +37,22 @@ internal object Screen {
 /**
  * Top-level ToolWindow content.
  * Owns the CardLayout state machine and coordinates all child screens.
- * Keeps UI logic out of the factory; each screen is self-contained.
  */
 class DroidleToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     private val cards   = CardLayout()
     private val deck    = JPanel(cards).apply { border = JBUI.Borders.empty() }
 
-    private lateinit var quizScreen:   QuizScreen
-    private lateinit var resultScreen: ResultScreen
+    private lateinit var quizScreen:    QuizScreen
+    private lateinit var resultScreen:  ResultScreen
     private lateinit var loadingScreen: LoadingScreen
-    private lateinit var errorScreen:  ErrorScreen
-    private lateinit var doneScreen:   DoneScreen
+    private lateinit var errorScreen:   ErrorScreen
+    private lateinit var doneScreen:    DoneScreen
+
+    // Toolbar refs for dynamic update
+    private lateinit var loginBtn:    JButton
+    private lateinit var langToggle:  JButton
+    private lateinit var userLabel:   JBLabel
 
     init {
         border = JBUI.Borders.empty()
@@ -53,16 +60,52 @@ class DroidleToolWindowPanel(private val project: Project) : JPanel(BorderLayout
         add(buildTopBar(), BorderLayout.NORTH)
         add(deck, BorderLayout.CENTER)
         start()
+
+        // Start local auth server (localhost:62330) for web→plugin token transfer
+        DroidleLocalAuthServer.getInstance().start()
+
+        // Listen for auth changes to refresh toolbar
+        ApplicationManager.getApplication().messageBus
+            .connect()
+            .subscribe(DroidleAuthListener.TOPIC, DroidleAuthListener {
+                SwingUtilities.invokeLater { refreshTopBar() }
+            })
     }
 
-    // ── Top bar: GitHub login + Leaderboard ────────────────────────────────────
+    // ── Top bar ───────────────────────────────────────────────────────────────
 
     private fun buildTopBar(): JPanel {
-        val loginBtn = iconTextButton(
+        val state = StateManager.getInstance()
+
+        // Login / user display
+        loginBtn = iconTextButton(
             icon  = AllIcons.Vcs.Vendors.Github,
-            label = "Giriş Yap",
-            tip   = "GitHub ile giriş yap"
-        ) { BrowserUtil.browse("https://droidle.vercel.app/login") }
+            label = loginLabel(state),
+            tip   = loginTip(state)
+        ) { onLoginClick() }
+
+        // User label (shown only when logged in)
+        userLabel = JBLabel(state.getUsername() ?: "").apply {
+            font       = JBUI.Fonts.smallFont()
+            foreground = JBColor(Color(0x10B981), Color(0x34D399))
+            isVisible  = state.isLoggedIn() && state.getUsername() != null
+        }
+
+        // Language toggle
+        langToggle = JButton(state.language.label).apply {
+            toolTipText      = "Dil değiştir / Switch language"
+            isBorderPainted  = false
+            isContentAreaFilled = false
+            isFocusPainted   = false
+            font             = JBUI.Fonts.smallFont()
+            cursor           = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+            foreground       = JBColor(Color(0x6B7280), Color(0x9CA3AF))
+            addActionListener { toggleLanguage() }
+            addMouseListener(object : MouseAdapter() {
+                override fun mouseEntered(e: MouseEvent) { isContentAreaFilled = true }
+                override fun mouseExited(e: MouseEvent)  { isContentAreaFilled = false }
+            })
+        }
 
         val leaderBtn = iconTextButton(
             icon  = AllIcons.Actions.ListChanges,
@@ -86,12 +129,49 @@ class DroidleToolWindowPanel(private val project: Project) : JPanel(BorderLayout
 
             val right = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), 0)).apply {
                 isOpaque = false
+                add(langToggle)
                 add(loginBtn)
+                add(userLabel)
                 add(leaderBtn)
             }
             add(logo,  BorderLayout.WEST)
             add(right, BorderLayout.EAST)
         }
+    }
+
+    private fun refreshTopBar() {
+        val state = StateManager.getInstance()
+        loginBtn.text    = loginLabel(state)
+        loginBtn.toolTipText = loginTip(state)
+        langToggle.text  = state.language.label
+        userLabel.text   = "@${state.getUsername() ?: ""}"
+        userLabel.isVisible = state.isLoggedIn() && state.getUsername() != null
+        revalidate(); repaint()
+    }
+
+    private fun loginLabel(state: StateManager): String =
+        if (state.isLoggedIn()) "Çıkış" else "Giriş Yap"
+
+    private fun loginTip(state: StateManager): String =
+        if (state.isLoggedIn()) "Oturumu kapat" else "GitHub ile giriş yap"
+
+    private fun onLoginClick() {
+        val state = StateManager.getInstance()
+        if (state.isLoggedIn()) {
+            state.clearAuthToken()
+            state.clearUsername()
+            refreshTopBar()
+        } else {
+            BrowserUtil.browse("https://droidle.vercel.app/login?source=plugin")
+        }
+    }
+
+    private fun toggleLanguage() {
+        val state = StateManager.getInstance()
+        state.language = if (state.language == AppLanguage.TR) AppLanguage.EN else AppLanguage.TR
+        refreshTopBar()
+        // Reload quiz so it appears in the new language
+        start()
     }
 
     /** Small borderless button with icon + text label */
@@ -101,20 +181,16 @@ class DroidleToolWindowPanel(private val project: Project) : JPanel(BorderLayout
         tip:     String,
         onClick: () -> Unit
     ): JButton = JButton(label, icon).apply {
-        toolTipText   = tip
-        isBorderPainted = false
+        toolTipText         = tip
+        isBorderPainted     = false
         isContentAreaFilled = false
-        isFocusPainted = false
-        font          = JBUI.Fonts.smallFont()
-        cursor        = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+        isFocusPainted      = false
+        font                = JBUI.Fonts.smallFont()
+        cursor              = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
         addActionListener { onClick() }
         addMouseListener(object : MouseAdapter() {
-            override fun mouseEntered(e: MouseEvent) {
-                isContentAreaFilled = true
-            }
-            override fun mouseExited(e: MouseEvent) {
-                isContentAreaFilled = false
-            }
+            override fun mouseEntered(e: MouseEvent) { isContentAreaFilled = true }
+            override fun mouseExited(e: MouseEvent)  { isContentAreaFilled = false }
         })
     }
 
@@ -125,7 +201,6 @@ class DroidleToolWindowPanel(private val project: Project) : JPanel(BorderLayout
         errorScreen   = ErrorScreen(onRetry = ::start)
         doneScreen    = DoneScreen(onRetry = ::openWebsite)
 
-        // Quiz and Result are re-created each session; placeholders added once
         quizScreen   = QuizScreen(onComplete = ::onQuizComplete, onError = ::showError)
         resultScreen = ResultScreen(
             correctCount = 0,
@@ -145,7 +220,6 @@ class DroidleToolWindowPanel(private val project: Project) : JPanel(BorderLayout
     private fun start() {
         show(Screen.LOADING)
 
-        // Already done today? Skip quiz.
         if (StateManager.getInstance().isQuizCompletedToday()) {
             show(Screen.DONE)
             return

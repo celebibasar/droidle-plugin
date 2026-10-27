@@ -15,6 +15,16 @@ data class DroidleSettings(
     val apiBaseUrl: String = "https://droidle.vercel.app"
 )
 
+enum class AppLanguage(val code: String, val label: String) {
+    TR("tr", "TR"),
+    EN("en", "EN");
+
+    companion object {
+        fun fromCode(code: String?): AppLanguage =
+            values().firstOrNull { it.code == code } ?: TR
+    }
+}
+
 @Service(Service.Level.APP)
 class StateManager {
 
@@ -63,6 +73,8 @@ class StateManager {
         props.setValue(KEY_LAST_NOTIFIED, LocalDate.now().format(DATE_FMT))
     }
 
+    // ── Auth ──────────────────────────────────────────────────────────────────
+
     fun getAuthToken(): String? = PasswordSafe.instance.getPassword(credentialAttributes())
 
     fun saveAuthToken(token: String) {
@@ -75,14 +87,36 @@ class StateManager {
 
     private fun credentialAttributes() = CredentialAttributes("app.droidle.plugin", "github_token")
 
+    // ── Username ──────────────────────────────────────────────────────────────
+
+    fun getUsername(): String? = props.getValue(KEY_USERNAME)
+
+    fun saveUsername(username: String) {
+        props.setValue(KEY_USERNAME, username)
+    }
+
+    fun clearUsername() {
+        props.unsetValue(KEY_USERNAME)
+    }
+
+    fun isLoggedIn(): Boolean = getAuthToken() != null
+
+    // ── Language ──────────────────────────────────────────────────────────────
+
+    var language: AppLanguage
+        get() = AppLanguage.fromCode(props.getValue(KEY_LANGUAGE))
+        set(value) { props.setValue(KEY_LANGUAGE, value.code) }
+
     companion object {
-        private const val KEY_API_URL = "droidle.apiBaseUrl"
-        private const val KEY_STREAK = "droidle.currentStreak"
-        private const val KEY_LONGEST_STREAK = "droidle.longestStreak"
-        private const val KEY_LAST_DATE = "droidle.lastCompletedDate"
-        private const val KEY_TOTAL_CORRECT = "droidle.totalCorrect"
-        private const val KEY_TOTAL_ATTEMPTED = "droidle.totalAttempted"
-        private const val KEY_LAST_NOTIFIED = "droidle.lastNotifiedDate"
+        private const val KEY_API_URL           = "droidle.apiBaseUrl"
+        private const val KEY_STREAK            = "droidle.currentStreak"
+        private const val KEY_LONGEST_STREAK    = "droidle.longestStreak"
+        private const val KEY_LAST_DATE         = "droidle.lastCompletedDate"
+        private const val KEY_TOTAL_CORRECT     = "droidle.totalCorrect"
+        private const val KEY_TOTAL_ATTEMPTED   = "droidle.totalAttempted"
+        private const val KEY_LAST_NOTIFIED     = "droidle.lastNotifiedDate"
+        private const val KEY_USERNAME          = "droidle.username"
+        private const val KEY_LANGUAGE          = "droidle.language"
 
         fun getInstance(): StateManager = service()
     }
