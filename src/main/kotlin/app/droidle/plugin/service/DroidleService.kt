@@ -1,12 +1,12 @@
 package app.droidle.plugin.service
 
+import app.droidle.plugin.model.DailyQuizResponse
 import app.droidle.plugin.model.Question
 import app.droidle.plugin.model.VerifyRequest
 import app.droidle.plugin.model.VerifyResponse
 import app.droidle.plugin.state.StateManager
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
-import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
@@ -44,8 +44,10 @@ class DroidleService {
         val body = response.body?.string() ?: throw IOException("Empty response body")
         if (!response.isSuccessful) throw IOException("API error ${response.code}: $body")
 
-        // Explicit serializer — compiler plugin gerektirmez
-        return json.decodeFromString(ListSerializer(Question.serializer()), body)
+        // API { date, dayNumber, questions: [...], antiCheatProtected } wrapper döndürür
+        val wrapper = json.decodeFromString(DailyQuizResponse.serializer(), body)
+        if (wrapper.questions.isEmpty()) throw IOException("Bugün için soru bulunamadı.")
+        return wrapper.questions
     }
 
     @Throws(IOException::class)
