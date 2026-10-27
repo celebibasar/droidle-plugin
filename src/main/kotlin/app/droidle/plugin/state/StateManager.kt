@@ -55,6 +55,14 @@ class StateManager {
 
     fun isQuizCompletedToday(): Boolean = lastCompletedDate == LocalDate.now()
 
+    /** Bugün IDE açılış bildirimi gönderildi mi? */
+    fun wasNotifiedToday(): Boolean =
+        props.getValue(KEY_LAST_NOTIFIED) == LocalDate.now().format(DATE_FMT)
+
+    fun markNotifiedToday() {
+        props.setValue(KEY_LAST_NOTIFIED, LocalDate.now().format(DATE_FMT))
+    }
+
     fun getAuthToken(): String? = PasswordSafe.instance.getPassword(credentialAttributes())
 
     fun saveAuthToken(token: String) {
@@ -74,6 +82,7 @@ class StateManager {
         private const val KEY_LAST_DATE = "droidle.lastCompletedDate"
         private const val KEY_TOTAL_CORRECT = "droidle.totalCorrect"
         private const val KEY_TOTAL_ATTEMPTED = "droidle.totalAttempted"
+        private const val KEY_LAST_NOTIFIED = "droidle.lastNotifiedDate"
 
         fun getInstance(): StateManager = service()
     }

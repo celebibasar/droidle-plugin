@@ -1,5 +1,22 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
-  <rect width="16" height="16" rx="3" fill="#1A73E8"/>
-  <text x="8" y="12" font-family="monospace" font-size="10" font-weight="bold"
-        text-anchor="middle" fill="white">D</text>
+  <!-- Bugdroid baş silüeti — emerald yeşil, Droidle brand rengi -->
+  <!-- Anten sol -->
+  <line x1="5.2" y1="5.2" x2="3.8" y2="3.0" stroke="#10b981" stroke-width="1.1" stroke-linecap="round"/>
+  <!-- Anten sağ -->
+  <line x1="10.8" y1="5.2" x2="12.2" y2="3.0" stroke="#10b981" stroke-width="1.1" stroke-linecap="round"/>
+  <!-- Kafa (yarım daire) -->
+  <path d="M3 8.5 A5 5 0 0 1 13 8.5 Z" fill="#10b981"/>
+  <!-- Yüz zemin (kafa içi) -->
+  <path d="M3.5 8.5 A4.5 4.5 0 0 1 12.5 8.5 Z" fill="#10b981"/>
+  <!-- Gözler -->
+  <circle cx="6.0" cy="7.2" r="0.85" fill="white"/>
+  <circle cx="10.0" cy="7.2" r="0.85" fill="white"/>
+  <!-- Gövde -->
+  <rect x="3" y="8.8" width="10" height="5.5" rx="1.5" fill="#10b981"/>
+  <!-- Kollar -->
+  <rect x="0.5" y="9.0" width="2" height="3.8" rx="1" fill="#10b981"/>
+  <rect x="13.5" y="9.0" width="2" height="3.8" rx="1" fill="#10b981"/>
+  <!-- Bacaklar -->
+  <rect x="4.2" y="13.5" width="2.8" height="2" rx="1" fill="#10b981"/>
+  <rect x="9.0" y="13.5" width="2.8" height="2" rx="1" fill="#10b981"/>
 </svg>

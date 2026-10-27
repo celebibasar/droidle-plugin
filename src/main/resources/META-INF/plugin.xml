@@ -5,9 +5,9 @@
 
     <description><![CDATA[
         <p><b>Start your Android dev day with a 5-question quiz — right inside Android Studio.</b></p>
-        <p>Droidle pulls today's questions from droidle.app and presents them in a sidebar panel.
-        Answer all 5, see your score, and build a daily streak.</p>
+        <p>Droidle opens droidle.vercel.app in a sidebar panel so you can answer today's 5 Android questions without leaving the IDE.</p>
         <p>Topics: Jetpack Compose, Coroutines, Architecture, Android Internals, AI Prompting.</p>
+        <p>A daily reminder balloon appears when you open your project — never miss a day.</p>
     ]]></description>
 
     <change-notes><![CDATA[
@@ -17,6 +17,8 @@
     <depends>com.intellij.modules.platform</depends>
 
     <extensions defaultExtensionNs="com.intellij">
+
+        <!-- Tool Window -->
         <toolWindow
             id="Droidle"
             anchor="right"
@@ -25,17 +27,29 @@
             canCloseContents="false"
             icon="/icons/droidle.svg"
         />
+
+        <!-- Settings -->
         <applicationConfigurable
             parentId="tools"
             instance="app.droidle.plugin.settings.DroidleSettingsConfigurable"
             id="app.droidle.plugin.settings"
             displayName="Droidle"
         />
-        <applicationService
-            serviceImplementation="app.droidle.plugin.state.StateManager"
+
+        <!-- Services -->
+        <applicationService serviceImplementation="app.droidle.plugin.state.StateManager"/>
+        <applicationService serviceImplementation="app.droidle.plugin.service.DroidleService"/>
+        <applicationService serviceImplementation="app.droidle.plugin.settings.DroidleSettingsState"/>
+
+        <!-- Günlük açılış bildirimi -->
+        <notificationGroup
+            id="Droidle"
+            displayType="BALLOON"
+            isLogByDefault="false"
         />
-        <applicationService
-            serviceImplementation="app.droidle.plugin.service.DroidleService"
-        />
+
+        <!-- Startup: her proje açılışında çalışır -->
+        <postStartupActivity implementation="app.droidle.plugin.DroidleStartupActivity"/>
+
     </extensions>
 </idea-plugin>
