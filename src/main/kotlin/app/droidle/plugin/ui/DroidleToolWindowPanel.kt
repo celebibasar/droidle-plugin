@@ -62,7 +62,7 @@ class DroidleToolWindowPanel(private val project: Project) : JPanel(BorderLayout
             icon  = AllIcons.Vcs.Vendors.Github,
             label = "Giriş Yap",
             tip   = "GitHub ile giriş yap"
-        ) { BrowserUtil.browse("https://droidle.vercel.app/api/auth/signin/github") }
+        ) { BrowserUtil.browse("https://droidle.vercel.app/login") }
 
         val leaderBtn = iconTextButton(
             icon  = AllIcons.Actions.ListChanges,
