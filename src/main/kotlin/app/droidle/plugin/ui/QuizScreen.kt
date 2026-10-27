@@ -1,10 +1,12 @@
 package app.droidle.plugin.ui
 
+import app.droidle.plugin.model.DocLink
 import app.droidle.plugin.model.Question
 import app.droidle.plugin.model.VerifyResponse
 import app.droidle.plugin.service.DroidleService
 import app.droidle.plugin.state.StateManager
 import com.intellij.icons.AllIcons
+import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.JBColor
@@ -118,7 +120,10 @@ class QuizScreen(
             val codeScroll = JBScrollPane(codeArea).apply {
                 horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
                 verticalScrollBarPolicy   = JScrollPane.VERTICAL_SCROLLBAR_NEVER
-                maximumSize               = Dimension(Int.MAX_VALUE, JBUI.scale(120))
+                // preferredSize height drives BoxLayout — don't use maximumSize or the
+                // scroll pane collapses. Let the JTextArea rows param set the height.
+                preferredSize             = Dimension(Int.MAX_VALUE, JBUI.scale(130))
+                minimumSize               = Dimension(0, JBUI.scale(60))
                 alignmentX                = Component.LEFT_ALIGNMENT
                 isVisible                 = false
                 border                    = RoundedLineBorder(JBColor(Color(0x3C3C3C), Color(0x3C3C3C)), JBUI.scale(6))
@@ -238,7 +243,7 @@ class QuizScreen(
         if (result.isCorrect) correctCount++
         val explanation = result.explanation_tr ?: result.explanation
         highlightCards(result.correctAnswer, selected)
-        explanationPanel.show(correct = result.isCorrect, text = explanation)
+        explanationPanel.show(correct = result.isCorrect, text = explanation, docLinks = result.docLinks)
         nextButton.isVisible = true
         nextButton.isEnabled = true
         revalidate(); repaint()
@@ -250,7 +255,7 @@ class QuizScreen(
         if (isCorrect) correctCount++
         val explanation = question.explanation_tr ?: question.explanation ?: ""
         highlightCards(correctKey, selected)
-        explanationPanel.show(correct = isCorrect, text = explanation)
+        explanationPanel.show(correct = isCorrect, text = explanation, docLinks = question.doc_links)
         nextButton.isVisible = true
         nextButton.isEnabled = true
         revalidate(); repaint()
@@ -373,30 +378,74 @@ private class OptionCard(
 
 // ── Explanation panel ──────────────────────────────────────────────────────────
 
-private class ExplanationPanel : JPanel(BorderLayout(JBUI.scale(8), 0)) {
+private class ExplanationPanel : JPanel() {
 
-    private val iconLabel = JBLabel()
-    private val textLabel = JBLabel()
-
-    init {
-        isOpaque  = false
-        alignmentX = Component.LEFT_ALIGNMENT
-
-        textLabel.apply {
-            font = JBUI.Fonts.smallFont()
-        }
-
-        add(iconLabel, BorderLayout.WEST)
-        add(textLabel, BorderLayout.CENTER)
+    private val iconLabel  = JBLabel()
+    private val textLabel  = JBLabel()
+    // Source links row — rebuilt each time show() is called
+    private val linksPanel = JPanel().apply {
+        layout   = FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)
+        isOpaque = false
     }
 
-    fun show(correct: Boolean, text: String) {
+    init {
+        layout     = BoxLayout(this, BoxLayout.Y_AXIS)
+        isOpaque   = false
+        alignmentX = Component.LEFT_ALIGNMENT
+
+        val topRow = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
+            isOpaque   = false
+            alignmentX = Component.LEFT_ALIGNMENT
+            add(iconLabel,  BorderLayout.WEST)
+            add(textLabel,  BorderLayout.CENTER)
+        }
+        textLabel.font = JBUI.Fonts.smallFont()
+
+        add(topRow)
+        add(Box.createVerticalStrut(JBUI.scale(6)))
+        add(linksPanel)
+    }
+
+    fun show(correct: Boolean, text: String, docLinks: List<DocLink> = emptyList()) {
         iconLabel.icon       = if (correct) AllIcons.General.InspectionsOK else AllIcons.General.BalloonError
         textLabel.text       = "<html><body style='width:100%'>$text</body></html>"
         textLabel.foreground = if (correct)
             JBColor(Color(0x15803D), Color(0x4ADE80))
         else
             JBColor(Color(0xB91C1C), Color(0xF87171))
+
+        // Rebuild source links
+        linksPanel.removeAll()
+        if (docLinks.isNotEmpty()) {
+            val headerLbl = JBLabel("Kaynaklar:").apply {
+                font       = JBUI.Fonts.smallFont()
+                foreground = JBUI.CurrentTheme.Label.disabledForeground()
+            }
+            linksPanel.add(headerLbl)
+            docLinks.forEach { link ->
+                val btn = JButton(link.title).apply {
+                    font              = JBUI.Fonts.smallFont()
+                    isBorderPainted   = false
+                    isContentAreaFilled = false
+                    isFocusPainted    = false
+                    foreground        = JBColor(Color(0x2563EB), Color(0x60A5FA))
+                    cursor            = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                    toolTipText       = link.url
+                    addActionListener { BrowserUtil.browse(link.url) }
+                    addMouseListener(object : MouseAdapter() {
+                        override fun mouseEntered(e: MouseEvent) {
+                            foreground = JBColor(Color(0x1D4ED8), Color(0x93C5FD))
+                        }
+                        override fun mouseExited(e: MouseEvent) {
+                            foreground = JBColor(Color(0x2563EB), Color(0x60A5FA))
+                        }
+                    })
+                }
+                linksPanel.add(btn)
+            }
+        }
+        linksPanel.isVisible = docLinks.isNotEmpty()
+
         isVisible = true
         revalidate(); repaint()
     }
