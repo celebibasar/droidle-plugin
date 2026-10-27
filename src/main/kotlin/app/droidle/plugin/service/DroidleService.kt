@@ -27,6 +27,8 @@ class DroidleService {
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .followSslRedirects(true)
         .build()
 
     private val baseUrl: String
@@ -35,19 +37,38 @@ class DroidleService {
     @Throws(IOException::class)
     fun fetchDailyQuiz(): List<Question> {
         val token = service<StateManager>().getAuthToken()
+        val url = "$baseUrl/api/daily-quiz"
         val requestBuilder = Request.Builder()
-            .url("$baseUrl/api/daily-quiz")
+            .url(url)
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json")
             .get()
         if (token != null) requestBuilder.header("Authorization", "Bearer $token")
 
         val response = client.newCall(requestBuilder.build()).execute()
-        val body = response.body?.string() ?: throw IOException("Empty response body")
-        if (!response.isSuccessful) throw IOException("API error ${response.code}: $body")
+        val body = response.body?.string() ?: ""
 
-        // API { date, dayNumber, questions: [...], antiCheatProtected } wrapper döndürür
-        val wrapper = json.decodeFromString(DailyQuizResponse.serializer(), body)
-        if (wrapper.questions.isEmpty()) throw IOException("Bugün için soru bulunamadı.")
-        return wrapper.questions
+        if (!response.isSuccessful) {
+            throw IOException("HTTP ${response.code} — ${body.take(200)}")
+        }
+
+        val trimmed = body.trim()
+        if (trimmed.isEmpty()) {
+            throw IOException("Sunucu boş yanıt döndürdü (HTTP ${response.code}). URL: $url")
+        }
+        if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) {
+            throw IOException("Beklenmeyen yanıt formatı (ilk 100 karakter): ${trimmed.take(100)}")
+        }
+
+        return if (trimmed.startsWith("[")) {
+            // Eski format: bare array
+            json.decodeFromString(kotlinx.serialization.builtins.ListSerializer(Question.serializer()), trimmed)
+        } else {
+            // Yeni format: { questions: [...], ... } wrapper
+            val wrapper = json.decodeFromString(DailyQuizResponse.serializer(), trimmed)
+            if (wrapper.questions.isEmpty()) throw IOException("Bugün için soru bulunamadı.")
+            wrapper.questions
+        }
     }
 
     @Throws(IOException::class)
@@ -58,12 +79,14 @@ class DroidleService {
 
         val requestBuilder = Request.Builder()
             .url("$baseUrl/api/verify-answer")
+            .header("Accept", "application/json")
             .post(body)
         if (token != null) requestBuilder.header("Authorization", "Bearer $token")
 
         val response = client.newCall(requestBuilder.build()).execute()
-        val responseBody = response.body?.string() ?: throw IOException("Empty response body")
-        if (!response.isSuccessful) throw IOException("API error ${response.code}: $responseBody")
+        val responseBody = response.body?.string() ?: ""
+        if (!response.isSuccessful) throw IOException("API error ${response.code}: ${responseBody.take(200)}")
+        if (responseBody.trim().isEmpty()) throw IOException("Sunucu boş yanıt döndürdü (verify)")
 
         return json.decodeFromString(VerifyResponse.serializer(), responseBody)
     }
