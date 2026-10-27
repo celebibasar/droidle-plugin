@@ -303,7 +303,10 @@ private class OptionCard(
         isOpaque  = false
         cursor    = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
         alignmentX = Component.LEFT_ALIGNMENT
-        maximumSize = Dimension(Int.MAX_VALUE, preferredSize.height + JBUI.scale(4))
+        // Do NOT set maximumSize here — children are not yet added, so
+        // preferredSize.height == 0 and the card collapses to zero height.
+        // BoxLayout will size cards naturally; max width is handled via
+        // the override below.
 
         add(keyLabel,  BorderLayout.WEST)
         add(textLabel, BorderLayout.CENTER)
@@ -323,6 +326,12 @@ private class OptionCard(
         }
         repaint()
     }
+
+    // BoxLayout calls getMaximumSize() to cap card height. Override so the
+    // card is always exactly its preferred height (computed after layout) and
+    // fills the full available width — this prevents option D from being clipped.
+    override fun getMaximumSize(): Dimension =
+        Dimension(Int.MAX_VALUE, preferredSize.height)
 
     override fun paintComponent(g: Graphics) {
         val g2 = g as Graphics2D
