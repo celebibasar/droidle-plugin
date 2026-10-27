@@ -1,0 +1,41 @@
+<idea-plugin>
+    <id>app.droidle.plugin</id>
+    <name>Droidle — Daily Android Quiz</name>
+    <vendor email="basarcelebi02@gmail.com" url="https://droidle.app">Droidle</vendor>
+
+    <description><![CDATA[
+        <p><b>Start your Android dev day with a 5-question quiz — right inside Android Studio.</b></p>
+        <p>Droidle pulls today's questions from droidle.app and presents them in a sidebar panel.
+        Answer all 5, see your score, and build a daily streak.</p>
+        <p>Topics: Jetpack Compose, Coroutines, Architecture, Android Internals, AI Prompting.</p>
+    ]]></description>
+
+    <change-notes><![CDATA[
+        <ul><li>0.1.0 — Initial release</li></ul>
+    ]]></change-notes>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow
+            id="Droidle"
+            anchor="right"
+            factoryClass="app.droidle.plugin.DroidleToolWindowFactory"
+            secondary="false"
+            canCloseContents="false"
+            icon="/icons/droidle.svg"
+        />
+        <applicationConfigurable
+            parentId="tools"
+            instance="app.droidle.plugin.settings.DroidleSettingsConfigurable"
+            id="app.droidle.plugin.settings"
+            displayName="Droidle"
+        />
+        <applicationService
+            serviceImplementation="app.droidle.plugin.state.StateManager"
+        />
+        <applicationService
+            serviceImplementation="app.droidle.plugin.service.DroidleService"
+        />
+    </extensions>
+</idea-plugin>
