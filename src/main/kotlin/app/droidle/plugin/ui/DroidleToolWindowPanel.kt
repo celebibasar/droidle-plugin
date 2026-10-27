@@ -3,6 +3,7 @@ package app.droidle.plugin.ui
 import app.droidle.plugin.model.Question
 import app.droidle.plugin.service.DroidleService
 import app.droidle.plugin.state.StateManager
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
