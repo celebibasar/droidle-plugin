@@ -1,40 +1,42 @@
 package app.droidle.plugin.ui
 
-import com.intellij.icons.AllIcons
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
+import java.awt.Color
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
 import java.awt.Insets
 import javax.swing.JPanel
 
-/**
- * Full-panel loading state with IDE-native spinner.
- * Uses AnimatedIcon.Default — the same spinner IntelliJ uses for inspections/indexing.
- */
 class LoadingScreen : JPanel(GridBagLayout()) {
+
+    private val green = Color(0x10, 0xB9, 0x81)
 
     init {
         border = JBUI.Borders.empty()
         isOpaque = false
 
         val gbc = GridBagConstraints().apply {
-            gridx = 0; gridy = GridBagConstraints.RELATIVE
+            gridx = 0
+            gridy = GridBagConstraints.RELATIVE
             anchor = GridBagConstraints.CENTER
             fill = GridBagConstraints.NONE
         }
 
-        // Spinner
-        val spinner = JBLabel(AnimatedIcon.Default())
-        gbc.insets = Insets(0, 0, JBUI.scale(8), 0)
-        add(spinner, gbc)
+        // Logo
+        add(JBLabel("🤖 Droidle").apply {
+            font = JBUI.Fonts.label(10f)
+            foreground = green
+        }, gbc.also { it.insets = Insets(0, 0, JBUI.scale(10), 0) })
+
+        // Big spinner
+        add(JBLabel(AnimatedIcon.Big()), gbc.also { it.insets = Insets(0, 0, JBUI.scale(12), 0) })
 
         // Caption
-        val caption = JBLabel("Sorular hazırlanıyor…").apply {
+        add(JBLabel("Günlük sorular yükleniyor...").apply {
+            font = JBUI.Fonts.label(12f)
             foreground = JBUI.CurrentTheme.Label.disabledForeground()
-        }
-        gbc.insets = Insets(0, 0, 0, 0)
-        add(caption, gbc)
+        }, gbc.also { it.insets = Insets(0, 0, 0, 0) })
     }
 }

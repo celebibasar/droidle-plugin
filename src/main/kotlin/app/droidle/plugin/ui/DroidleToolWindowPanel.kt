@@ -170,8 +170,11 @@ class DroidleToolWindowPanel(private val project: Project) : JPanel(BorderLayout
         val state = StateManager.getInstance()
         state.language = if (state.language == AppLanguage.TR) AppLanguage.EN else AppLanguage.TR
         refreshTopBar()
-        // Reload quiz so it appears in the new language
-        start()
+        // Re-fetch quiz so it appears in the new language.
+        // We call fetchQuiz() directly (not start()) to bypass the DONE-screen
+        // gate — even if today's quiz is already completed the user should still
+        // be able to read the questions in the other language.
+        fetchQuiz()
     }
 
     /** Small borderless button with icon + text label */
