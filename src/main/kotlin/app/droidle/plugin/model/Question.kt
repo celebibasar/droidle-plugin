@@ -1,5 +1,6 @@
 package app.droidle.plugin.model
 
+import app.droidle.plugin.state.AppLanguage
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -22,16 +23,28 @@ data class Question(
     val code_language: String? = null,
     val tags: List<String> = emptyList()
 ) {
-    /** Kullanıcıya gösterilecek soru metni (TR öncelikli) */
-    fun displayQuestion(): String = question_tr ?: question
+    /** Kullanıcıya gösterilecek soru metni — dile göre */
+    fun displayQuestion(lang: AppLanguage = AppLanguage.TR): String = when (lang) {
+        AppLanguage.EN -> question_en ?: question_tr ?: question
+        AppLanguage.TR -> question_tr ?: question
+    }
 
-    /** Şık metni — verilen key için TR öncelikli seçenek haritasından döner */
-    fun displayOptions(): Map<String, String> = options_tr ?: options
+    /** Şık metni — dile göre seçenek haritası */
+    fun displayOptions(lang: AppLanguage = AppLanguage.TR): Map<String, String> = when (lang) {
+        AppLanguage.EN -> options_en ?: options_tr ?: options
+        AppLanguage.TR -> options_tr ?: options
+    }
+
+    /** Explanation metni — dile göre */
+    fun displayExplanation(lang: AppLanguage = AppLanguage.TR): String? = when (lang) {
+        AppLanguage.EN -> explanation_en ?: explanation_tr ?: explanation
+        AppLanguage.TR -> explanation_tr ?: explanation
+    }
 
     /** Doğru şıkkın metnini döner */
-    fun correctOptionText(): String? {
+    fun correctOptionText(lang: AppLanguage = AppLanguage.TR): String? {
         val key = correct_answer ?: return null
-        return displayOptions()[key]
+        return displayOptions(lang)[key]
     }
 }
 
