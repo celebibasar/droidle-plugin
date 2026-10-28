@@ -5,6 +5,7 @@ import app.droidle.plugin.model.Question
 import app.droidle.plugin.model.VerifyResponse
 import app.droidle.plugin.service.DroidleService
 import app.droidle.plugin.state.AppLanguage
+import app.droidle.plugin.state.CategoryResult
 import app.droidle.plugin.state.StateManager
 import com.intellij.icons.AllIcons
 import com.intellij.ide.BrowserUtil
@@ -23,61 +24,70 @@ import javax.swing.*
 import javax.swing.border.CompoundBorder
 
 /**
- * Native quiz screen — replaces WebView for the active quiz flow.
+ * Native quiz screen.
  *
- * Layout:
- *   ┌─────────────────────────────────┐
- *   │ Header: progress dots + category│
- *   ├─────────────────────────────────┤
- *   │ (scrollable)                    │
- *   │  Question text                  │
- *   │  [optional code snippet]        │
- *   │  A B C D option cards           │
- *   │  Explanation (after answer)     │
- *   ├─────────────────────────────────┤
- *   │ Footer: [Next →] / [Results →] │
- *   └─────────────────────────────────┘
+ * State machine (mirrors web src/lib/quiz-machine.ts quizReducer):
+ *   DEFAULT → option clicked → [server verify] → ANSWERED → next → next question
+ *   On last question → ANSWERED → onComplete(correctCount, questions, earnedXp, categoryResults)
+ *
+ * Key invariants:
+ *  - `correctCount` and `earnedXp` are only incremented from server-verified results.
+ *  - Fallback (local) evaluation uses question.correct_answer; XP uses question.xpValue.
+ *  - `answered` flag is set before the network call so rapid clicks don't double-count.
+ *  - `categoryResults` accumulates per-category stats for StateManager.recordQuizCompletion().
  */
 class QuizScreen(
     private val questions: List<Question> = emptyList(),
-    private val onComplete: (correctCount: Int, questions: List<Question>) -> Unit,
+    private val onComplete: (
+        correctCount: Int,
+        questions: List<Question>,
+        earnedXp: Int,
+        categoryResults: Map<String, CategoryResult>
+    ) -> Unit,
     private val onError: (String) -> Unit
 ) : JPanel(BorderLayout(0, 0)) {
 
-    // ── State ──────────────────────────────────────────────────────────────────
-    private var currentIndex = 0
-    private var correctCount = 0
-    private var answered     = false
+    // ── Quiz state ─────────────────────────────────────────────────────────────
+    private var currentIndex    = 0
+    private var correctCount    = 0
+    private var earnedXp        = 0
+    private var answered        = false
     private var selectedKey: String? = null
 
-    // ── Header widgets ─────────────────────────────────────────────────────────
-    private val dotsPanel    = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0))
+    /** category → CategoryResult, accumulated as questions are answered. */
+    private val categoryResults = mutableMapOf<String, CategoryResult>()
+
+    // ── Header ─────────────────────────────────────────────────────────────────
+    private val dotsPanel     = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0))
     private val categoryLabel = JBLabel("").apply {
         font       = JBUI.Fonts.smallFont()
         foreground = JBUI.CurrentTheme.Label.disabledForeground()
     }
 
-    // ── Content widgets ────────────────────────────────────────────────────────
-    private val questionLabel = JBLabel("").apply {
-        font = JBUI.Fonts.label(13f)
-    }
+    // ── Body ───────────────────────────────────────────────────────────────────
+    private val questionLabel = JBLabel("").apply { font = JBUI.Fonts.label(13f) }
+
     private val codeArea = JBTextArea(4, 0).apply {
-        isEditable   = false
-        lineWrap     = false
-        font         = Font(Font.MONOSPACED, Font.PLAIN, JBUI.scaleFontSize(11f).toInt())
-        border       = JBUI.Borders.empty(JBUI.scale(8))
-        background   = JBColor(Color(0x1E1E1E), Color(0x1E1E1E))
-        foreground   = JBColor(Color(0xD4D4D4), Color(0xD4D4D4))
-        isVisible    = false
+        isEditable  = false
+        lineWrap    = false
+        font        = Font(Font.MONOSPACED, Font.PLAIN, JBUI.scaleFontSize(11f).toInt())
+        border      = JBUI.Borders.empty(JBUI.scale(8))
+        background  = JBColor(Color(0x1E1E1E), Color(0x1E1E1E))
+        foreground  = JBColor(Color(0xD4D4D4), Color(0xD4D4D4))
+        isVisible   = false
     }
+
     private val optionCards  = mutableListOf<OptionCard>()
     private val optionsPanel = JPanel().apply {
-        layout  = BoxLayout(this, BoxLayout.Y_AXIS)
+        layout   = BoxLayout(this, BoxLayout.Y_AXIS)
         isOpaque = false
     }
     private val explanationPanel = ExplanationPanel().apply { isVisible = false }
 
-    // ── Footer widgets ─────────────────────────────────────────────────────────
+    // ── XP chip (shown after answer) ───────────────────────────────────────────
+    private val xpChip = XpChip(0).apply { isVisible = false }
+
+    // ── Footer ─────────────────────────────────────────────────────────────────
     private val nextButton = JButton("Sonraki Soru").apply {
         isEnabled = false
         isVisible = false
@@ -89,19 +99,18 @@ class QuizScreen(
     init {
         border = JBUI.Borders.empty()
         buildLayout()
-
-        if (questions.isNotEmpty()) {
-            showQuestion(0)
-        }
+        if (questions.isNotEmpty()) showQuestion(0)
     }
 
-    // ── Layout assembly ────────────────────────────────────────────────────────
+    // ── Layout ─────────────────────────────────────────────────────────────────
 
     private fun buildLayout() {
-        // — Header —
         val headerPanel = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
-            border   = CompoundBorder(
-                BorderFactory.createMatteBorder(0, 0, 1, 0, JBUI.CurrentTheme.CustomFrameDecorations.separatorForeground()),
+            border = CompoundBorder(
+                BorderFactory.createMatteBorder(
+                    0, 0, 1, 0,
+                    JBUI.CurrentTheme.CustomFrameDecorations.separatorForeground()
+                ),
                 JBUI.Borders.empty(JBUI.scale(8), JBUI.scale(12))
             )
             isOpaque = false
@@ -109,11 +118,13 @@ class QuizScreen(
             add(categoryLabel, BorderLayout.EAST)
         }
 
-        // — Scrollable body —
         val bodyPanel = JPanel().apply {
             layout   = BoxLayout(this, BoxLayout.Y_AXIS)
             isOpaque = false
-            border   = JBUI.Borders.empty(JBUI.scale(14), JBUI.scale(12), JBUI.scale(8), JBUI.scale(12))
+            border   = JBUI.Borders.empty(
+                JBUI.scale(14), JBUI.scale(12),
+                JBUI.scale(8),  JBUI.scale(12)
+            )
 
             add(questionLabel)
             add(Box.createVerticalStrut(JBUI.scale(12)))
@@ -121,18 +132,20 @@ class QuizScreen(
             val codeScroll = JBScrollPane(codeArea).apply {
                 horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
                 verticalScrollBarPolicy   = JScrollPane.VERTICAL_SCROLLBAR_NEVER
-                // preferredSize height drives BoxLayout — don't use maximumSize or the
-                // scroll pane collapses. Let the JTextArea rows param set the height.
                 preferredSize             = Dimension(Int.MAX_VALUE, JBUI.scale(130))
                 minimumSize               = Dimension(0, JBUI.scale(60))
                 alignmentX                = Component.LEFT_ALIGNMENT
                 isVisible                 = false
-                border                    = RoundedLineBorder(JBColor(Color(0x3C3C3C), Color(0x3C3C3C)), JBUI.scale(6))
+                border                    = RoundedLineBorder(
+                    JBColor(Color(0x3C3C3C), Color(0x3C3C3C)), JBUI.scale(6)
+                )
             }
             add(codeScroll)
             add(Box.createVerticalStrut(JBUI.scale(10)))
             add(optionsPanel)
-            add(Box.createVerticalStrut(JBUI.scale(10)))
+            add(Box.createVerticalStrut(JBUI.scale(8)))
+            add(xpChip)
+            add(Box.createVerticalStrut(JBUI.scale(8)))
             add(explanationPanel)
         }
 
@@ -142,10 +155,14 @@ class QuizScreen(
             horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
         }
 
-        // — Footer —
-        val footerPanel = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(8), JBUI.scale(6))).apply {
-            border   = CompoundBorder(
-                BorderFactory.createMatteBorder(1, 0, 0, 0, JBUI.CurrentTheme.CustomFrameDecorations.separatorForeground()),
+        val footerPanel = JPanel(
+            FlowLayout(FlowLayout.RIGHT, JBUI.scale(8), JBUI.scale(6))
+        ).apply {
+            border = CompoundBorder(
+                BorderFactory.createMatteBorder(
+                    1, 0, 0, 0,
+                    JBUI.CurrentTheme.CustomFrameDecorations.separatorForeground()
+                ),
                 JBUI.Borders.empty(JBUI.scale(4), JBUI.scale(8))
             )
             isOpaque = false
@@ -153,9 +170,9 @@ class QuizScreen(
             add(nextButton)
         }
 
-        add(headerPanel,  BorderLayout.NORTH)
-        add(scrollPane,   BorderLayout.CENTER)
-        add(footerPanel,  BorderLayout.SOUTH)
+        add(headerPanel, BorderLayout.NORTH)
+        add(scrollPane,  BorderLayout.CENTER)
+        add(footerPanel, BorderLayout.SOUTH)
     }
 
     // ── Question rendering ─────────────────────────────────────────────────────
@@ -165,7 +182,8 @@ class QuizScreen(
         answered     = false
         selectedKey  = null
 
-        val q = questions[index]
+        val q    = questions[index]
+        val lang = StateManager.getInstance().language
 
         // Progress dots
         dotsPanel.removeAll()
@@ -178,26 +196,21 @@ class QuizScreen(
         }
 
         categoryLabel.text = q.category
-
-        val lang = StateManager.getInstance().language
-
-        // Question text — HTML wrap for multi-line
         questionLabel.text = "<html><body style='width:100%'>${q.displayQuestion(lang)}</body></html>"
         questionLabel.alignmentX = Component.LEFT_ALIGNMENT
 
         // Code snippet
         val snippet = q.code_snippet
         if (!snippet.isNullOrBlank()) {
-            codeArea.text   = snippet.trim()
+            codeArea.text      = snippet.trim()
             codeArea.isVisible = true
-            // find parent JBScrollPane and sync visibility
             (codeArea.parent?.parent as? JScrollPane)?.isVisible = true
         } else {
             codeArea.isVisible = false
             (codeArea.parent?.parent as? JScrollPane)?.isVisible = false
         }
 
-        // Options
+        // Option cards
         optionsPanel.removeAll()
         optionCards.clear()
         val opts = q.displayOptions(lang)
@@ -209,28 +222,71 @@ class QuizScreen(
             optionsPanel.add(Box.createVerticalStrut(JBUI.scale(6)))
         }
 
+        xpChip.isVisible         = false
         explanationPanel.isVisible = false
-        nextButton.isVisible  = false
-        nextButton.isEnabled  = false
-        nextButton.text       = if (index < questions.size - 1) {
-            if (lang == AppLanguage.EN) "Next Question  →" else "Sonraki Soru  →"
-        } else {
-            if (lang == AppLanguage.EN) "See Results  →" else "Sonuçları Gör  →"
-        }
-        checkingIcon.isVisible = false
+        nextButton.isVisible     = false
+        nextButton.isEnabled     = false
+        nextButton.text          = nextButtonLabel(index, lang)
+        checkingIcon.isVisible   = false
 
         revalidate()
         repaint()
     }
 
-    // ── Answer handling ────────────────────────────────────────────────────────
+    private fun nextButtonLabel(index: Int, lang: AppLanguage): String =
+        if (index < questions.size - 1)
+            if (lang == AppLanguage.EN) "Next Question  →" else "Sonraki Soru  →"
+        else
+            if (lang == AppLanguage.EN) "See Results  →" else "Sonuçları Gör  →"
+
+    // ── Language refresh (no index/score reset) ────────────────────────────────
+
+    /**
+     * Call when language is toggled mid-quiz.
+     * Updates visible text in-place — does NOT reset index, score, or answered state.
+     */
+    fun refreshLanguage() {
+        if (questions.isEmpty()) return
+        val q    = questions[currentIndex]
+        val lang = StateManager.getInstance().language
+
+        questionLabel.text = "<html><body style='width:100%'>${q.displayQuestion(lang)}</body></html>"
+
+        val opts = q.displayOptions(lang)
+        if (!answered) {
+            // Rebuild option cards (none are in answered state yet)
+            optionsPanel.removeAll()
+            optionCards.clear()
+            listOf("A", "B", "C", "D").forEach { key ->
+                val text = opts[key] ?: return@forEach
+                val card = OptionCard(key = key, text = text) { onOptionSelected(key, q) }
+                optionCards.add(card)
+                optionsPanel.add(card)
+                optionsPanel.add(Box.createVerticalStrut(JBUI.scale(6)))
+            }
+        } else {
+            // Card is in answered state — only update text labels, keep highlight colours
+            optionCards.forEachIndexed { i, card ->
+                val text = opts[card.key] ?: return@forEachIndexed
+                card.updateText(text)
+            }
+        }
+
+        if (nextButton.isVisible) {
+            nextButton.text = nextButtonLabel(currentIndex, lang)
+        }
+
+        revalidate()
+        repaint()
+    }
+
+    // ── Answer flow ────────────────────────────────────────────────────────────
 
     private fun onOptionSelected(key: String, question: Question) {
         if (answered) return
         answered    = true
         selectedKey = key
 
-        // Disable all cards while checking
         optionCards.forEach { it.setEnabled(false) }
         checkingIcon.isVisible = true
 
@@ -239,22 +295,42 @@ class QuizScreen(
             SwingUtilities.invokeLater {
                 checkingIcon.isVisible = false
                 result.fold(
-                    onSuccess = { applyResult(it, key) },
+                    onSuccess = { applyVerifiedResult(it, key, question) },
                     onFailure = { applyLocalResult(key, question) }
                 )
             }
         }
     }
 
-    private fun applyResult(result: VerifyResponse, selected: String) {
-        if (result.isCorrect) correctCount++
+    private fun applyVerifiedResult(result: VerifyResponse, selected: String, question: Question) {
         val lang = StateManager.getInstance().language
-        val explanation = if (lang == AppLanguage.EN)
-            result.explanation_en ?: result.explanation_tr ?: result.explanation
-        else
-            result.explanation_tr ?: result.explanation
+        val xp   = result.xpEarned
+
+        if (result.isCorrect) {
+            correctCount++
+            earnedXp += xp
+        }
+
+        // Accumulate category breakdown
+        val cat = result.category.ifBlank { question.category }
+        categoryResults[cat] = CategoryResult(
+            attempted = (categoryResults[cat]?.attempted ?: 0) + 1,
+            correct   = (categoryResults[cat]?.correct   ?: 0) + (if (result.isCorrect) 1 else 0)
+        )
+
+        val explanation = when (lang) {
+            AppLanguage.EN -> result.explanation_en ?: result.explanation_tr ?: result.explanation
+            AppLanguage.TR -> result.explanation_tr ?: result.explanation
+        }
+
         highlightCards(result.correctAnswer, selected)
-        explanationPanel.show(correct = result.isCorrect, text = explanation, docLinks = result.docLinks)
+        xpChip.update(xp, result.isCorrect)
+        xpChip.isVisible = true
+        explanationPanel.show(
+            correct   = result.isCorrect,
+            text      = explanation,
+            docLinks  = result.docLinks
+        )
         nextButton.isVisible = true
         nextButton.isEnabled = true
         revalidate(); repaint()
@@ -263,10 +339,25 @@ class QuizScreen(
     private fun applyLocalResult(selected: String, question: Question) {
         val correctKey = question.correct_answer ?: selected
         val isCorrect  = selected.equals(correctKey, ignoreCase = true)
-        if (isCorrect) correctCount++
-        val lang = StateManager.getInstance().language
+        val xp         = if (isCorrect) question.xpValue else 0
+
+        if (isCorrect) {
+            correctCount++
+            earnedXp += xp
+        }
+
+        val cat = question.category
+        categoryResults[cat] = CategoryResult(
+            attempted = (categoryResults[cat]?.attempted ?: 0) + 1,
+            correct   = (categoryResults[cat]?.correct   ?: 0) + (if (isCorrect) 1 else 0)
+        )
+
+        val lang        = StateManager.getInstance().language
         val explanation = question.displayExplanation(lang) ?: ""
+
         highlightCards(correctKey, selected)
+        xpChip.update(xp, isCorrect)
+        xpChip.isVisible = true
         explanationPanel.show(correct = isCorrect, text = explanation, docLinks = question.doc_links)
         nextButton.isVisible = true
         nextButton.isEnabled = true
@@ -285,7 +376,7 @@ class QuizScreen(
     private fun advance() {
         val next = currentIndex + 1
         if (next >= questions.size) {
-            onComplete(correctCount, questions)
+            onComplete(correctCount, questions, earnedXp, categoryResults)
         } else {
             showQuestion(next)
         }
@@ -305,50 +396,51 @@ private class OptionCard(
     private var state: OptionState = OptionState.DEFAULT
 
     private val keyLabel = JBLabel(key).apply {
-        font      = JBUI.Fonts.label(12f).deriveFont(Font.BOLD)
-        preferredSize = Dimension(JBUI.scale(22), JBUI.scale(22))
+        font = JBUI.Fonts.label(12f).deriveFont(Font.BOLD)
+        preferredSize       = Dimension(JBUI.scale(22), JBUI.scale(22))
         horizontalAlignment = SwingConstants.CENTER
         verticalAlignment   = SwingConstants.CENTER
     }
-    private val textLabel = JBLabel("<html><body style='width:100%'>$text</body></html>")
+    val textLabel = JBLabel("<html><body style='width:100%'>$text</body></html>")
 
     init {
-        border    = CompoundBorder(
+        border     = CompoundBorder(
             RoundedLineBorder(borderColor(), JBUI.scale(6)),
             JBUI.Borders.empty(JBUI.scale(9), JBUI.scale(10))
         )
-        isOpaque  = false
-        cursor    = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        isOpaque   = false
+        cursor     = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
         alignmentX = Component.LEFT_ALIGNMENT
-        // Do NOT set maximumSize here — children are not yet added, so
-        // preferredSize.height == 0 and the card collapses to zero height.
-        // BoxLayout will size cards naturally; max width is handled via
-        // the override below.
 
         add(keyLabel,  BorderLayout.WEST)
         add(textLabel, BorderLayout.CENTER)
 
         addMouseListener(object : MouseAdapter() {
-            override fun mouseEntered(e: MouseEvent)  { if (state == OptionState.DEFAULT) { state = OptionState.HOVER;   repaint() } }
-            override fun mouseExited(e: MouseEvent)   { if (state == OptionState.HOVER)   { state = OptionState.DEFAULT; repaint() } }
-            override fun mouseClicked(e: MouseEvent)  { if (isEnabled) onClick(key) }
+            override fun mouseEntered(e: MouseEvent) {
+                if (state == OptionState.DEFAULT) { state = OptionState.HOVER; repaint() }
+            }
+            override fun mouseExited(e: MouseEvent) {
+                if (state == OptionState.HOVER) { state = OptionState.DEFAULT; repaint() }
+            }
+            override fun mouseClicked(e: MouseEvent) { if (isEnabled) onClick(key) }
         })
     }
 
     fun applyAnswerState(isCorrect: Boolean, isSelected: Boolean) {
         state = when {
-            isCorrect              -> OptionState.CORRECT
+            isCorrect                -> OptionState.CORRECT
             isSelected && !isCorrect -> OptionState.WRONG
-            else                   -> OptionState.DEFAULT
+            else                     -> OptionState.DEFAULT
         }
         repaint()
     }
 
-    // BoxLayout calls getMaximumSize() to cap card height. Override so the
-    // card is always exactly its preferred height (computed after layout) and
-    // fills the full available width — this prevents option D from being clipped.
-    override fun getMaximumSize(): Dimension =
-        Dimension(Int.MAX_VALUE, preferredSize.height)
+    fun updateText(newText: String) {
+        textLabel.text = "<html><body style='width:100%'>$newText</body></html>"
+        revalidate(); repaint()
+    }
+
+    override fun getMaximumSize(): Dimension = Dimension(Int.MAX_VALUE, preferredSize.height)
 
     override fun paintComponent(g: Graphics) {
         val g2 = g as Graphics2D
@@ -356,8 +448,7 @@ private class OptionCard(
         g2.color = bgColor()
         g2.fillRoundRect(0, 0, width, height, JBUI.scale(6), JBUI.scale(6))
         super.paintComponent(g)
-        // Update border colour on repaint
-        border = CompoundBorder(
+        border             = CompoundBorder(
             RoundedLineBorder(borderColor(), JBUI.scale(6)),
             JBUI.Borders.empty(JBUI.scale(9), JBUI.scale(10))
         )
@@ -384,7 +475,62 @@ private class OptionCard(
     }
     private fun textFg() = when (state) {
         OptionState.DEFAULT, OptionState.HOVER -> JBUI.CurrentTheme.Label.foreground()
-        else -> keyFg()
+        else                                   -> keyFg()
+    }
+}
+
+// ── XP chip (post-answer feedback) ────────────────────────────────────────────
+
+private class XpChip(private var xp: Int) : JComponent() {
+
+    private val green = Color(0x10, 0xB9, 0x81)
+    private val red   = Color(0xEF, 0x44, 0x44)
+    private var correct = false
+
+    private val arc  = JBUI.scale(12)
+    private val hPad = JBUI.scale(10)
+    private val vPad = JBUI.scale(4)
+
+    init {
+        font      = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+        alignmentX = Component.LEFT_ALIGNMENT
+        updateSize()
+    }
+
+    fun update(newXp: Int, isCorrect: Boolean) {
+        xp      = newXp
+        correct = isCorrect
+        updateSize()
+        repaint()
+    }
+
+    private fun label() = if (correct) "+${xp} XP" else "0 XP"
+
+    private fun updateSize() {
+        val fm = getFontMetrics(font ?: JBUI.Fonts.smallFont().deriveFont(Font.BOLD))
+        val w  = fm.stringWidth(label()) + hPad * 2
+        val h  = fm.height + vPad * 2
+        preferredSize = Dimension(w, h)
+        minimumSize   = preferredSize
+    }
+
+    override fun paintComponent(g: Graphics) {
+        val g2   = g as Graphics2D
+        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+        g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
+        val col  = if (correct) green else red
+        g2.color = Color(col.red, col.green, col.blue, 20)
+        g2.fillRoundRect(0, 0, width, height, arc, arc)
+        g2.color = Color(col.red, col.green, col.blue, 160)
+        g2.stroke = BasicStroke(1f)
+        g2.drawRoundRect(0, 0, width - 1, height - 1, arc, arc)
+        g2.color = col
+        g2.font  = font ?: JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+        val fm   = g2.fontMetrics
+        val text = label()
+        val tx   = (width - fm.stringWidth(text)) / 2
+        val ty   = (height + fm.ascent - fm.descent) / 2
+        g2.drawString(text, tx, ty)
     }
 }
 
@@ -394,7 +540,6 @@ private class ExplanationPanel : JPanel() {
 
     private val iconLabel  = JBLabel()
     private val textLabel  = JBLabel()
-    // Source links row — rebuilt each time show() is called
     private val linksPanel = JPanel().apply {
         layout   = FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)
         isOpaque = false
@@ -408,8 +553,8 @@ private class ExplanationPanel : JPanel() {
         val topRow = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
             isOpaque   = false
             alignmentX = Component.LEFT_ALIGNMENT
-            add(iconLabel,  BorderLayout.WEST)
-            add(textLabel,  BorderLayout.CENTER)
+            add(iconLabel, BorderLayout.WEST)
+            add(textLabel, BorderLayout.CENTER)
         }
         textLabel.font = JBUI.Fonts.smallFont()
 
@@ -426,23 +571,21 @@ private class ExplanationPanel : JPanel() {
         else
             JBColor(Color(0xB91C1C), Color(0xF87171))
 
-        // Rebuild source links
         linksPanel.removeAll()
         if (docLinks.isNotEmpty()) {
-            val headerLbl = JBLabel("Kaynaklar:").apply {
+            linksPanel.add(JBLabel("Kaynaklar:").apply {
                 font       = JBUI.Fonts.smallFont()
                 foreground = JBUI.CurrentTheme.Label.disabledForeground()
-            }
-            linksPanel.add(headerLbl)
+            })
             docLinks.forEach { link ->
-                val btn = JButton(link.title).apply {
-                    font              = JBUI.Fonts.smallFont()
-                    isBorderPainted   = false
+                linksPanel.add(JButton(link.title).apply {
+                    font                = JBUI.Fonts.smallFont()
+                    isBorderPainted     = false
                     isContentAreaFilled = false
-                    isFocusPainted    = false
-                    foreground        = JBColor(Color(0x2563EB), Color(0x60A5FA))
-                    cursor            = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-                    toolTipText       = link.url
+                    isFocusPainted      = false
+                    foreground          = JBColor(Color(0x2563EB), Color(0x60A5FA))
+                    cursor              = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                    toolTipText         = link.url
                     addActionListener { BrowserUtil.browse(link.url) }
                     addMouseListener(object : MouseAdapter() {
                         override fun mouseEntered(e: MouseEvent) {
@@ -452,8 +595,7 @@ private class ExplanationPanel : JPanel() {
                             foreground = JBColor(Color(0x2563EB), Color(0x60A5FA))
                         }
                     })
-                }
-                linksPanel.add(btn)
+                })
             }
         }
         linksPanel.isVisible = docLinks.isNotEmpty()
@@ -463,14 +605,13 @@ private class ExplanationPanel : JPanel() {
     }
 }
 
-// ── Progress dot ───────────────────────────────────────────────────────────────
+// ── Progress dots ──────────────────────────────────────────────────────────────
 
 private enum class DotState { TODO, ACTIVE, DONE }
 
 private class DotIndicator(state: DotState) : JComponent() {
-
     private val dotState = state
-    private val size = JBUI.scale(8)
+    private val size     = JBUI.scale(8)
 
     init {
         preferredSize = Dimension(size, size)
@@ -486,7 +627,7 @@ private class DotIndicator(state: DotState) : JComponent() {
             DotState.DONE   -> JBColor(Color(0x6EE7B7), Color(0x34D399))
             DotState.TODO   -> JBColor(Color(0xD4D4D8), Color(0x52525B))
         }
-        val d = if (dotState == DotState.ACTIVE) size else size - JBUI.scale(2)
+        val d   = if (dotState == DotState.ACTIVE) size else size - JBUI.scale(2)
         val off = (size - d) / 2
         g2.fillOval(off, off, d, d)
     }

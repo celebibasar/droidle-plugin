@@ -5,6 +5,7 @@ import app.droidle.plugin.auth.DroidleLocalAuthServer
 import app.droidle.plugin.model.Question
 import app.droidle.plugin.service.DroidleService
 import app.droidle.plugin.state.AppLanguage
+import app.droidle.plugin.state.CategoryResult
 import app.droidle.plugin.state.StateManager
 import com.intellij.icons.AllIcons
 import com.intellij.ide.BrowserUtil
@@ -36,12 +37,24 @@ internal object Screen {
 
 /**
  * Top-level ToolWindow content.
- * Owns the CardLayout state machine and coordinates all child screens.
+ *
+ * CardLayout state machine:
+ *   LOADING → (server says completedToday) → DONE
+ *   LOADING → (questions ready)            → QUIZ
+ *   QUIZ    → (last question answered)     → RESULT
+ *   QUIZ    → (error during answer verify) → ERROR
+ *   ERROR   → (retry)                      → LOADING
+ *
+ * Sync contract (mirrors web supabase-sync.ts):
+ *   - If server returns completedToday=true → syncFromServer() + show DONE
+ *   - If user finishes quiz locally         → recordQuizCompletion() + show RESULT
+ *   - Double-count guard lives in StateManager.recordQuizCompletion()
+ *   - All dates are Europe/Istanbul via StateManager.todayIstanbul()
  */
 class DroidleToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) {
 
-    private val cards   = CardLayout()
-    private val deck    = JPanel(cards).apply { border = JBUI.Borders.empty() }
+    private val cards = CardLayout()
+    private val deck  = JPanel(cards).apply { border = JBUI.Borders.empty() }
 
     private lateinit var quizScreen:    QuizScreen
     private lateinit var resultScreen:  ResultScreen
@@ -50,21 +63,21 @@ class DroidleToolWindowPanel(private val project: Project) : JPanel(BorderLayout
     private lateinit var doneScreen:    DoneScreen
 
     // Toolbar refs for dynamic update
-    private lateinit var loginBtn:    JButton
-    private lateinit var langToggle:  JButton
-    private lateinit var userLabel:   JBLabel
+    private lateinit var loginBtn:   JButton
+    private lateinit var langToggle: JButton
+    private lateinit var userLabel:  JBLabel
 
     init {
         border = JBUI.Borders.empty()
         buildScreens()
         add(buildTopBar(), BorderLayout.NORTH)
-        add(deck, BorderLayout.CENTER)
+        add(deck,          BorderLayout.CENTER)
         start()
 
         // Start local auth server (localhost:62330) for web→plugin token transfer
         DroidleLocalAuthServer.getInstance().start()
 
-        // Listen for auth changes to refresh toolbar
+        // Refresh toolbar when auth state changes (login / logout from web)
         ApplicationManager.getApplication().messageBus
             .connect()
             .subscribe(DroidleAuthListener.TOPIC, DroidleAuthListener {
@@ -77,32 +90,29 @@ class DroidleToolWindowPanel(private val project: Project) : JPanel(BorderLayout
     private fun buildTopBar(): JPanel {
         val state = StateManager.getInstance()
 
-        // Login / user display
         loginBtn = iconTextButton(
             icon  = AllIcons.Vcs.Vendors.Github,
             label = loginLabel(state),
             tip   = loginTip(state)
         ) { onLoginClick() }
 
-        // User label (shown only when logged in)
         userLabel = JBLabel(state.getUsername() ?: "").apply {
             font       = JBUI.Fonts.smallFont()
             foreground = JBColor(Color(0x10B981), Color(0x34D399))
             isVisible  = state.isLoggedIn() && state.getUsername() != null
         }
 
-        // Language toggle
         langToggle = JButton(state.language.label).apply {
-            toolTipText      = "Dil değiştir / Switch language"
-            isBorderPainted  = false
+            toolTipText         = "Dil değiştir / Switch language"
+            isBorderPainted     = false
             isContentAreaFilled = false
-            isFocusPainted   = false
-            font             = JBUI.Fonts.smallFont()
-            cursor           = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
-            foreground       = JBColor(Color(0x6B7280), Color(0x9CA3AF))
+            isFocusPainted      = false
+            font                = JBUI.Fonts.smallFont()
+            cursor              = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+            foreground          = JBColor(Color(0x6B7280), Color(0x9CA3AF))
             addActionListener { toggleLanguage() }
             addMouseListener(object : MouseAdapter() {
-                override fun mouseEntered(e: MouseEvent) { isContentAreaFilled = true }
+                override fun mouseEntered(e: MouseEvent) { isContentAreaFilled = true  }
                 override fun mouseExited(e: MouseEvent)  { isContentAreaFilled = false }
             })
         }
@@ -121,8 +131,10 @@ class DroidleToolWindowPanel(private val project: Project) : JPanel(BorderLayout
 
         return JPanel(BorderLayout()).apply {
             border = CompoundBorder(
-                BorderFactory.createMatteBorder(0, 0, 1, 0,
-                    JBUI.CurrentTheme.CustomFrameDecorations.separatorForeground()),
+                BorderFactory.createMatteBorder(
+                    0, 0, 1, 0,
+                    JBUI.CurrentTheme.CustomFrameDecorations.separatorForeground()
+                ),
                 JBUI.Borders.empty(JBUI.scale(3), JBUI.scale(6))
             )
             isOpaque = false
@@ -140,19 +152,19 @@ class DroidleToolWindowPanel(private val project: Project) : JPanel(BorderLayout
     }
 
     private fun refreshTopBar() {
-        val state = StateManager.getInstance()
-        loginBtn.text    = loginLabel(state)
+        val state       = StateManager.getInstance()
+        loginBtn.text   = loginLabel(state)
         loginBtn.toolTipText = loginTip(state)
-        langToggle.text  = state.language.label
-        userLabel.text   = "@${state.getUsername() ?: ""}"
+        langToggle.text = state.language.label
+        userLabel.text  = "@${state.getUsername() ?: ""}"
         userLabel.isVisible = state.isLoggedIn() && state.getUsername() != null
         revalidate(); repaint()
     }
 
-    private fun loginLabel(state: StateManager): String =
+    private fun loginLabel(state: StateManager) =
         if (state.isLoggedIn()) "Çıkış" else "Giriş Yap"
 
-    private fun loginTip(state: StateManager): String =
+    private fun loginTip(state: StateManager) =
         if (state.isLoggedIn()) "Oturumu kapat" else "GitHub ile giriş yap"
 
     private fun onLoginClick() {
@@ -166,18 +178,18 @@ class DroidleToolWindowPanel(private val project: Project) : JPanel(BorderLayout
         }
     }
 
+    /**
+     * Toggle language, then re-fetch the quiz so all text is in the new language.
+     * We use fetchQuizResult() (not start()) so we never short-circuit to DONE —
+     * the user should be able to read the questions even if already completed.
+     */
     private fun toggleLanguage() {
         val state = StateManager.getInstance()
         state.language = if (state.language == AppLanguage.TR) AppLanguage.EN else AppLanguage.TR
         refreshTopBar()
-        // Re-fetch quiz so it appears in the new language.
-        // We call fetchQuiz() directly (not start()) to bypass the DONE-screen
-        // gate — even if today's quiz is already completed the user should still
-        // be able to read the questions in the other language.
         fetchQuiz()
     }
 
-    /** Small borderless button with icon + text label */
     private fun iconTextButton(
         icon:    javax.swing.Icon,
         label:   String,
@@ -192,7 +204,7 @@ class DroidleToolWindowPanel(private val project: Project) : JPanel(BorderLayout
         cursor              = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
         addActionListener { onClick() }
         addMouseListener(object : MouseAdapter() {
-            override fun mouseEntered(e: MouseEvent) { isContentAreaFilled = true }
+            override fun mouseEntered(e: MouseEvent) { isContentAreaFilled = true  }
             override fun mouseExited(e: MouseEvent)  { isContentAreaFilled = false }
         })
     }
@@ -202,12 +214,13 @@ class DroidleToolWindowPanel(private val project: Project) : JPanel(BorderLayout
     private fun buildScreens() {
         loadingScreen = LoadingScreen()
         errorScreen   = ErrorScreen(onRetry = ::start)
-        doneScreen    = DoneScreen(onRetry = ::openWebsite)
+        doneScreen    = DoneScreen(onOpenWeb = ::openWebsite)
 
         quizScreen   = QuizScreen(onComplete = ::onQuizComplete, onError = ::showError)
         resultScreen = ResultScreen(
             correctCount = 0,
             questions    = emptyList(),
+            earnedXp     = 0,
             onOpenWeb    = ::openWebsite
         )
 
@@ -220,10 +233,18 @@ class DroidleToolWindowPanel(private val project: Project) : JPanel(BorderLayout
 
     // ── Entry point ────────────────────────────────────────────────────────────
 
+    /**
+     * Initial load / retry entry point.
+     * Short-circuits to DONE when local state already marks today as complete.
+     * Full server fetch otherwise (which may also short-circuit if server says completedToday).
+     */
     private fun start() {
         show(Screen.LOADING)
 
         if (StateManager.getInstance().isQuizCompletedToday()) {
+            // Local state already records completion — jump to DONE with known data.
+            // (Streak / score already persisted by recordQuizCompletion on that day.)
+            replaceDoneScreen(todayCorrect = null, todayTotal = null, todayXp = null)
             show(Screen.DONE)
             return
         }
@@ -231,17 +252,45 @@ class DroidleToolWindowPanel(private val project: Project) : JPanel(BorderLayout
         fetchQuiz()
     }
 
+    /**
+     * Fetches today's quiz result from the server.
+     *
+     * If the server says completedToday=true (authenticated user already submitted):
+     *   → calls StateManager.syncFromServer() with streak + XP from server
+     *   → shows DONE screen with today's session data
+     *
+     * Otherwise replaces the QuizScreen and shows it.
+     */
     private fun fetchQuiz() {
         show(Screen.LOADING)
         ApplicationManager.getApplication().executeOnPooledThread {
             try {
-                val questions = DroidleService.getInstance().fetchDailyQuiz()
+                val result = DroidleService.getInstance().fetchDailyQuizResult()
                 SwingUtilities.invokeLater {
-                    replaceQuizScreen(questions)
-                    show(Screen.QUIZ)
+                    if (result.completedToday) {
+                        // Server is authoritative — sync local state and show DONE
+                        StateManager.getInstance().syncFromServer(
+                            correctCount  = result.correctCount ?: 0,
+                            totalCount    = result.questions.size.takeIf { it > 0 }
+                                ?: result.correctCount?.let { it + 1 } ?: 1,
+                            serverStreak  = result.currentStreak,
+                            earnedXp      = result.earnedXp ?: 0
+                        )
+                        replaceDoneScreen(
+                            todayCorrect = result.correctCount,
+                            todayTotal   = result.questions.size.takeIf { it > 0 },
+                            todayXp      = result.earnedXp
+                        )
+                        show(Screen.DONE)
+                    } else {
+                        replaceQuizScreen(result.questions)
+                        show(Screen.QUIZ)
+                    }
                 }
             } catch (e: Exception) {
-                SwingUtilities.invokeLater { showError(e.message ?: "Bilinmeyen hata") }
+                SwingUtilities.invokeLater {
+                    showError(e.message ?: "Bilinmeyen hata")
+                }
             }
         }
     }
@@ -250,17 +299,58 @@ class DroidleToolWindowPanel(private val project: Project) : JPanel(BorderLayout
 
     private fun replaceQuizScreen(questions: List<Question>) {
         deck.remove(quizScreen)
-        quizScreen = QuizScreen(questions = questions, onComplete = ::onQuizComplete, onError = ::showError)
+        quizScreen = QuizScreen(
+            questions  = questions,
+            onComplete = ::onQuizComplete,
+            onError    = ::showError
+        )
         deck.add(quizScreen, Screen.QUIZ)
         deck.revalidate()
     }
 
-    private fun onQuizComplete(correctCount: Int, questions: List<Question>) {
-        StateManager.getInstance().recordQuizCompletion(correctCount, questions.size)
+    private fun replaceDoneScreen(
+        todayCorrect: Int?,
+        todayTotal:   Int?,
+        todayXp:      Int?
+    ) {
+        deck.remove(doneScreen)
+        doneScreen = DoneScreen(
+            todayCorrect = todayCorrect,
+            todayTotal   = todayTotal,
+            todayXp      = todayXp,
+            onOpenWeb    = ::openWebsite
+        )
+        deck.add(doneScreen, Screen.DONE)
+        deck.revalidate()
+    }
+
+    /**
+     * Called by QuizScreen when the last question is answered.
+     *
+     * @param correctCount      Number of correct answers in this session.
+     * @param questions         Full question list (for ResultScreen breakdown).
+     * @param earnedXp          Total XP earned (from verified server responses or local fallback).
+     * @param categoryResults   Per-category stats accumulated during the quiz.
+     */
+    private fun onQuizComplete(
+        correctCount:    Int,
+        questions:       List<Question>,
+        earnedXp:        Int,
+        categoryResults: Map<String, CategoryResult>
+    ) {
+        // Persist — double-count guard is inside StateManager
+        StateManager.getInstance().recordQuizCompletion(
+            correctCount    = correctCount,
+            totalCount      = questions.size,
+            earnedXp        = earnedXp,
+            categoryResults = categoryResults
+        )
+
         deck.remove(resultScreen)
         resultScreen = ResultScreen(
             correctCount = correctCount,
             questions    = questions,
+            earnedXp     = earnedXp,
             onOpenWeb    = ::openWebsite
         )
         deck.add(resultScreen, Screen.RESULT)
@@ -273,11 +363,7 @@ class DroidleToolWindowPanel(private val project: Project) : JPanel(BorderLayout
         show(Screen.ERROR)
     }
 
-    private fun show(name: String) {
-        cards.show(deck, name)
-    }
+    private fun show(name: String) { cards.show(deck, name) }
 
-    private fun openWebsite() {
-        BrowserUtil.browse("https://droidle.vercel.app")
-    }
+    private fun openWebsite() { BrowserUtil.browse("https://droidle.vercel.app") }
 }

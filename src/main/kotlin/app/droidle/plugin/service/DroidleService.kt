@@ -2,6 +2,7 @@ package app.droidle.plugin.service
 
 import app.droidle.plugin.model.DailyQuizResponse
 import app.droidle.plugin.model.Question
+import app.droidle.plugin.model.QuizFetchResult
 import app.droidle.plugin.model.VerifyRequest
 import app.droidle.plugin.model.VerifyResponse
 import app.droidle.plugin.settings.DroidleSettingsState
@@ -46,7 +47,7 @@ class DroidleService {
     }
 
     @Throws(IOException::class)
-    fun fetchDailyQuiz(): List<Question> {
+    fun fetchDailyQuizResult(): QuizFetchResult {
         val token = service<StateManager>().getAuthToken()
         val url = "$baseUrl/api/daily-quiz"
         val requestBuilder = Request.Builder()
@@ -71,13 +72,24 @@ class DroidleService {
         }
 
         return if (trimmed.startsWith("[")) {
-            json.decodeFromString(ListSerializer(Question.serializer()), trimmed)
+            val questions = json.decodeFromString(ListSerializer(Question.serializer()), trimmed)
+            QuizFetchResult(questions = questions, completedToday = false, correctCount = null)
         } else {
             val wrapper = json.decodeFromString(DailyQuizResponse.serializer(), trimmed)
-            if (wrapper.questions.isEmpty()) throw IOException("Bugün için soru bulunamadı.")
-            wrapper.questions
+            if (!wrapper.completedToday && wrapper.questions.isEmpty()) {
+                throw IOException("Bugün için soru bulunamadı.")
+            }
+            QuizFetchResult(
+                questions      = wrapper.questions,
+                completedToday = wrapper.completedToday,
+                correctCount   = wrapper.correctCount
+            )
         }
     }
+
+    /** Backwards-compat helper used by tests / older callers */
+    @Throws(IOException::class)
+    fun fetchDailyQuiz(): List<Question> = fetchDailyQuizResult().questions
 
     @Throws(IOException::class)
     fun verifyAnswer(questionId: String, selectedOption: String): VerifyResponse {
