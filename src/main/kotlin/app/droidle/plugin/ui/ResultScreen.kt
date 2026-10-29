@@ -109,13 +109,13 @@ class ResultScreen(
 
             val caption = when (lang) {
                 AppLanguage.EN -> when {
-                    pct == 100 -> "Perfect! All 5 Correct! 🎉"
+                    pct == 100 -> if (total == 5) "Perfect! All 5 Correct! 🎉" else "Perfect! All $total Correct! 🎉"
                     pct >= 80  -> "Great job! Keep the streak alive! 🔥"
                     pct >= 60  -> "Good effort, sharp thinking! 💡"
                     else       -> "Done for today! Review mistakes below 👇"
                 }
                 AppLanguage.TR -> when {
-                    pct == 100 -> "Kusursuz! 5'te 5 Yaptın! 🎉"
+                    pct == 100 -> if (total == 5) "Kusursuz! 5'te 5 Yaptın! 🎉" else "Kusursuz! $total'de $total Yaptın! 🎉"
                     pct >= 80  -> "Harika gidiş! Seriyi koru! 🔥"
                     pct >= 60  -> "İyi iş çıkardın, zihnini açtın! 💡"
                     else       -> "Bugün tamamlandı! Aşağıdan hatalarını incele 👇"
@@ -159,7 +159,8 @@ class ResultScreen(
                 val icon = BugdroidIcon(
                     questionIndex = i,
                     isCorrect = isCorrect,
-                    isSelected = (i == selectedQuestionIndex)
+                    isSelected = (i == selectedQuestionIndex),
+                    lang = lang
                 ) { clickedIndex ->
                     selectQuestion(clickedIndex)
                 }
@@ -260,14 +261,15 @@ class ResultScreen(
 
     private fun determineQuestionCorrectness(index: Int, q: Question): Boolean {
         val optionKeys = listOf("A", "B", "C", "D")
-        val correctKey = q.resolvedCorrectAnswer ?: "A"
-        val correctIndex = optionKeys.indexOf(correctKey.uppercase())
+        val correctKey = (q.resolvedCorrectAnswer ?: "A").uppercase()
+        val correctIndex = optionKeys.indexOf(correctKey)
 
         // 1. From answers map if present
         val ans = answers[q.id] ?: answers[index.toString()]
-        if (ans?.isCorrect != null) return ans.isCorrect!!
-        if (!ans?.selectedOption.isNullOrBlank()) {
-            return ans!!.selectedOption.equals(correctKey, ignoreCase = true)
+        if (ans?.resolvedIsCorrect != null) return ans.resolvedIsCorrect!!
+        val ansOpt = ans?.resolvedSelectedOption
+        if (!ansOpt.isNullOrBlank()) {
+            return ansOpt.equals(correctKey, ignoreCase = true)
         }
 
         // 2. From selected_options index vs correct option index
@@ -281,7 +283,8 @@ class ResultScreen(
 
     private fun determineUserChosenOption(index: Int, q: Question): String? {
         val ans = answers[q.id] ?: answers[index.toString()]
-        if (!ans?.selectedOption.isNullOrBlank()) return ans!!.selectedOption
+        val ansOpt = ans?.resolvedSelectedOption
+        if (!ansOpt.isNullOrBlank()) return ansOpt.uppercase()
 
         val optionKeys = listOf("A", "B", "C", "D")
         val userOptionIdx = selectedOptions.getOrNull(index)
@@ -360,12 +363,12 @@ class ResultScreen(
 
         // Options breakdown
         val opts = question.displayOptions(lang)
-        val correctKey = question.resolvedCorrectAnswer ?: "A"
+        val correctKey = (question.resolvedCorrectAnswer ?: "A").uppercase()
 
         listOf("A", "B", "C", "D").forEach { key ->
             val text = opts[key] ?: return@forEach
-            val isUserChoice = (userOption == key)
-            val isOptionCorrect = (key == correctKey)
+            val isUserChoice = (userOption != null && userOption.equals(key, ignoreCase = true))
+            val isOptionCorrect = key.equals(correctKey, ignoreCase = true)
 
             val row = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
                 isOpaque = false
@@ -549,59 +552,57 @@ class ResultScreen(
         return panel
     }
 
-    private class XpBadge(private val xp: Int, private val lang: AppLanguage) : JPanel() {
-        private val text = if (lang == AppLanguage.EN) "✨ +$xp Earned XP" else "✨ +$xp Kazanılan XP"
-
+    internal class XpBadge(val xp: Int, val lang: AppLanguage) : JBLabel(
+        if (lang == AppLanguage.EN) "✨ +$xp Earned XP" else "✨ +$xp Kazanılan XP"
+    ) {
         init {
+            font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+            foreground = Color(0x8B, 0x5C, 0xF6)
+            border = JBUI.Borders.empty(JBUI.scale(2), JBUI.scale(8))
             isOpaque = false
-            val fm = getFontMetrics(JBUI.Fonts.smallFont().deriveFont(Font.BOLD))
-            preferredSize = Dimension(fm.stringWidth(text) + JBUI.scale(16), JBUI.scale(22))
         }
 
         override fun paintComponent(g: Graphics) {
-            val g2 = g as Graphics2D
-            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-            val purple = Color(0x8B, 0x5C, 0xF6)
-            g2.color = Color(purple.red, purple.green, purple.blue, 25)
-            g2.fillRoundRect(0, 0, width, height, height, height)
-            g2.color = Color(purple.red, purple.green, purple.blue, 140)
-            g2.stroke = BasicStroke(1f)
-            g2.drawRoundRect(0, 0, width - 1, height - 1, height, height)
-
-            g2.color = purple
-            g2.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
-            val fm = g2.fontMetrics
-            val tx = (width - fm.stringWidth(text)) / 2
-            val ty = (height + fm.ascent - fm.descent) / 2
-            g2.drawString(text, tx, ty)
+            val g2 = g.create() as Graphics2D
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                val purple = Color(0x8B, 0x5C, 0xF6)
+                g2.color = Color(purple.red, purple.green, purple.blue, 25)
+                g2.fillRoundRect(0, 0, width, height, height, height)
+                g2.color = Color(purple.red, purple.green, purple.blue, 140)
+                g2.stroke = BasicStroke(1f)
+                g2.drawRoundRect(0, 0, width - 1, height - 1, height, height)
+                super.paintComponent(g2)
+            } finally {
+                g2.dispose()
+            }
         }
     }
 
-    private class StreakResultBadge(private val streak: Int, private val lang: AppLanguage) : JPanel() {
-        private val text = if (lang == AppLanguage.EN) "🔥 $streak Streak" else "🔥 $streak Günlük Seri"
-
+    internal class StreakResultBadge(val streak: Int, val lang: AppLanguage) : JBLabel(
+        if (lang == AppLanguage.EN) "🔥 $streak Streak" else "🔥 $streak Günlük Seri"
+    ) {
         init {
+            font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+            foreground = Color(0xF5, 0x9E, 0x0B)
+            border = JBUI.Borders.empty(JBUI.scale(2), JBUI.scale(8))
             isOpaque = false
-            val fm = getFontMetrics(JBUI.Fonts.smallFont().deriveFont(Font.BOLD))
-            preferredSize = Dimension(fm.stringWidth(text) + JBUI.scale(16), JBUI.scale(22))
         }
 
         override fun paintComponent(g: Graphics) {
-            val g2 = g as Graphics2D
-            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-            val amber = Color(0xF5, 0x9E, 0x0B)
-            g2.color = Color(amber.red, amber.green, amber.blue, 25)
-            g2.fillRoundRect(0, 0, width, height, height, height)
-            g2.color = Color(amber.red, amber.green, amber.blue, 140)
-            g2.stroke = BasicStroke(1f)
-            g2.drawRoundRect(0, 0, width - 1, height - 1, height, height)
-
-            g2.color = amber
-            g2.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
-            val fm = g2.fontMetrics
-            val tx = (width - fm.stringWidth(text)) / 2
-            val ty = (height + fm.ascent - fm.descent) / 2
-            g2.drawString(text, tx, ty)
+            val g2 = g.create() as Graphics2D
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                val amber = Color(0xF5, 0x9E, 0x0B)
+                g2.color = Color(amber.red, amber.green, amber.blue, 25)
+                g2.fillRoundRect(0, 0, width, height, height, height)
+                g2.color = Color(amber.red, amber.green, amber.blue, 140)
+                g2.stroke = BasicStroke(1f)
+                g2.drawRoundRect(0, 0, width - 1, height - 1, height, height)
+                super.paintComponent(g2)
+            } finally {
+                g2.dispose()
+            }
         }
     }
 }

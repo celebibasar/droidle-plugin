@@ -1,5 +1,6 @@
 package app.droidle.plugin.ui.components
 
+import app.droidle.plugin.state.AppLanguage
 import com.intellij.util.ui.JBUI
 import java.awt.*
 import java.awt.event.MouseAdapter
@@ -21,6 +22,7 @@ class BugdroidIcon(
     val questionIndex: Int,
     val isCorrect: Boolean,
     var isSelected: Boolean = false,
+    val lang: AppLanguage = AppLanguage.TR,
     private val onClick: (Int) -> Unit
 ) : JComponent() {
 
@@ -37,6 +39,11 @@ class BugdroidIcon(
         maximumSize   = preferredSize
         cursor        = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
         isOpaque      = false
+        toolTipText   = if (lang == AppLanguage.EN) {
+            "Question ${questionIndex + 1} (${if (isCorrect) "Correct" else "Incorrect"})"
+        } else {
+            "${questionIndex + 1}. Soru (${if (isCorrect) "Doğru" else "Yanlış"})"
+        }
 
         addMouseListener(object : MouseAdapter() {
             override fun mouseEntered(e: MouseEvent?) {

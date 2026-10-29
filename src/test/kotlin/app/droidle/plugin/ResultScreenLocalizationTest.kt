@@ -102,6 +102,8 @@ class ResultScreenLocalizationTest {
         assertTrue(allLabels.any { it.contains("Tebrikler!") }, "Celebration title should be in TR")
         assertTrue(allLabels.any { it.contains("Bugünün Android testini tamamladınız.") }, "Celebration desc should be in TR")
         assertTrue(allLabels.any { it.contains("2 / 2 Doğru") }, "Score should indicate 'Doğru' in TR")
+        assertTrue(allLabels.any { it.contains("✨ +35 Kazanılan XP") }, "XP badge should be in TR")
+        assertTrue(allLabels.any { it.contains("Günlük Seri") }, "Streak badge should be in TR")
 
         // Review instructions in TR
         assertTrue(allLabels.any { it.contains("Soruları İncele - Detayları görmek için Bugdroid'lere tıklayın") }, "Review instruction should be in TR")
@@ -153,6 +155,8 @@ class ResultScreenLocalizationTest {
         assertTrue(allLabels.any { it.contains("Congratulations!") }, "Celebration title should be in EN")
         assertTrue(allLabels.any { it.contains("You completed today's Android quiz.") }, "Celebration desc should be in EN")
         assertTrue(allLabels.any { it.contains("1 / 2 Correct") }, "Score should indicate 'Correct' in EN")
+        assertTrue(allLabels.any { it.contains("✨ +10 Earned XP") }, "XP badge should be in EN")
+        assertTrue(allLabels.any { it.contains("Streak") }, "Streak badge should be in EN")
 
         // Review instructions in EN
         assertTrue(allLabels.any { it.contains("Review Questions - Click Bugdroids to see details") }, "Review instruction should be in EN")
@@ -269,5 +273,73 @@ class ResultScreenLocalizationTest {
         assertTrue(cardLabels.any { it.contains("✗ Incorrect") }, "Should show ✗ Incorrect in English")
         assertTrue(cardLabels.any { it.contains("What is Dispatchers.IO used for?") }, "Should show question 2 English text")
         assertTrue(cardLabels.any { it.contains("💡 TECHNICAL EXPLANATION") }, "Should show English technical explanation header")
+    }
+
+    @Test
+    fun `test bugdroid tooltips in TR and EN`() {
+        val screen = ResultScreen(
+            correctCount = 1,
+            questions = sampleQuestions,
+            earnedXp = 10,
+            selectedOptions = listOf(0, 0),
+            answers = mapOf(
+                "q1" to UserAnswerPayload(questionId = "q1", selectedOption = "A", isCorrect = true, correctAnswer = "A", xpEarned = 10),
+                "q2" to UserAnswerPayload(questionId = "q2", selectedOption = "A", isCorrect = false, correctAnswer = "B", xpEarned = 0)
+            ),
+            onOpenWeb = {}
+        )
+
+        screen.overrideLanguage = AppLanguage.TR
+        screen.refreshLanguage()
+        val trIcons = screen.getBugdroidIcons()
+        assertEquals("1. Soru (Doğru)", trIcons[0].toolTipText)
+        assertEquals("2. Soru (Yanlış)", trIcons[1].toolTipText)
+
+        screen.overrideLanguage = AppLanguage.EN
+        screen.refreshLanguage()
+        val enIcons = screen.getBugdroidIcons()
+        assertEquals("Question 1 (Correct)", enIcons[0].toolTipText)
+        assertEquals("Question 2 (Incorrect)", enIcons[1].toolTipText)
+    }
+
+    @Test
+    fun `test ResultScreen handles snake_case selected_option and case-insensitivity`() {
+        val screen = ResultScreen(
+            correctCount = 1,
+            questions = sampleQuestions,
+            earnedXp = 10,
+            selectedOptions = emptyList(),
+            answers = mapOf(
+                "q1" to UserAnswerPayload(questionId = "q1", selected_option = "a", correctAnswer = "a", xpEarned = 10),
+                "q2" to UserAnswerPayload(questionId = "q2", selected_option = "a", correctAnswer = "B", xpEarned = 0)
+            ),
+            onOpenWeb = {}
+        )
+
+        screen.overrideLanguage = AppLanguage.EN
+        screen.refreshLanguage()
+        val icons = screen.getBugdroidIcons()
+        assertTrue(icons[0].isCorrect, "q1 should be resolved as correct even with lowercase 'a' and selected_option")
+        assertFalse(icons[1].isCorrect, "q2 should be resolved as incorrect")
+    }
+
+    @Test
+    fun `test ResultScreen perfect score caption adapts to total question count`() {
+        val screen = ResultScreen(
+            correctCount = 2,
+            questions = sampleQuestions,
+            earnedXp = 35,
+            onOpenWeb = {}
+        )
+
+        screen.overrideLanguage = AppLanguage.EN
+        screen.refreshLanguage()
+        val enLabels = findAllLabels(screen)
+        assertTrue(enLabels.any { it.contains("Perfect! All 2 Correct! 🎉") }, "Should say 'All 2 Correct' for 2 questions")
+
+        screen.overrideLanguage = AppLanguage.TR
+        screen.refreshLanguage()
+        val trLabels = findAllLabels(screen)
+        assertTrue(trLabels.any { it.contains("Kusursuz! 2'de 2 Yaptın! 🎉") }, "Should say '2'de 2' for 2 questions")
     }
 }
