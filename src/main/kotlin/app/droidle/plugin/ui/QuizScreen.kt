@@ -70,6 +70,7 @@ class QuizScreen(
     @Volatile private var isUpdatingLocally = false
     private var windowFocusListener: WindowFocusListener? = null
     private var windowPropertyListener: PropertyChangeListener? = null
+    private var hierarchyListener: HierarchyListener? = null
 
     // UI Components
     private fun currentLanguage(): AppLanguage = try {
@@ -704,17 +705,21 @@ class QuizScreen(
         val win = SwingUtilities.getWindowAncestor(this)
         win?.addWindowFocusListener(wfl)
 
-        addHierarchyListener { e ->
-            if ((e.changeFlags and HierarchyEvent.SHOWING_CHANGED.toLong()) != 0L && isShowing) {
-                val currentWin = SwingUtilities.getWindowAncestor(this)
-                if (currentWin != null && windowFocusListener != null) {
-                    currentWin.removeWindowFocusListener(windowFocusListener)
-                    currentWin.addWindowFocusListener(windowFocusListener)
-                }
-                if (!isDisposed && !isUpdatingLocally) {
-                    checkRemoteSync()
+        if (hierarchyListener == null) {
+            val hl = HierarchyListener { e ->
+                if ((e.changeFlags and HierarchyEvent.SHOWING_CHANGED.toLong()) != 0L && isShowing) {
+                    val currentWin = SwingUtilities.getWindowAncestor(this)
+                    if (currentWin != null && windowFocusListener != null) {
+                        currentWin.removeWindowFocusListener(windowFocusListener)
+                        currentWin.addWindowFocusListener(windowFocusListener)
+                    }
+                    if (!isDisposed && !isUpdatingLocally) {
+                        checkRemoteSync()
+                    }
                 }
             }
+            hierarchyListener = hl
+            addHierarchyListener(hl)
         }
 
         val propListener = PropertyChangeListener { evt ->
@@ -731,6 +736,10 @@ class QuizScreen(
     }
 
     private fun removeFocusListeners() {
+        hierarchyListener?.let {
+            removeHierarchyListener(it)
+            hierarchyListener = null
+        }
         windowPropertyListener?.let {
             try {
                 KeyboardFocusManager.getCurrentKeyboardFocusManager().removePropertyChangeListener("activeWindow", it)
@@ -767,6 +776,20 @@ class QuizScreen(
         }
     }
 
+    private fun computeCategoryResults(answers: Map<String, UserAnswerPayload>): Map<String, CategoryResult> {
+        val results = mutableMapOf<String, CategoryResult>()
+        val qMap = questions.associateBy { it.id }
+        answers.values.forEach { ans ->
+            val cat = ans.category ?: qMap[ans.questionId]?.category ?: "General"
+            val existing = results[cat] ?: CategoryResult(0, 0)
+            results[cat] = CategoryResult(
+                attempted = existing.attempted + 1,
+                correct = existing.correct + (if (ans.isCorrect == true) 1 else 0)
+            )
+        }
+        return results
+    }
+
     internal fun handleRemoteSubmissionUpdate(remoteSub: DailySubmissionRow, state: StateManager? = null) {
         val reconciled = reconcileDailySubmission(remoteSub, questions)
 
@@ -774,6 +797,8 @@ class QuizScreen(
         if (reconciled.isComplete) {
             SwingUtilities.invokeLater {
                 if (isDisposed) return@invokeLater
+                stopSyncPoller()
+
                 state?.syncFromServer(
                     correctCount = reconciled.score,
                     totalCount = questions.size,
@@ -781,17 +806,12 @@ class QuizScreen(
                     selectedOptions = reconciled.selectedOptions,
                     answers = reconciled.answers
                 )
-                stopSyncPoller()
 
-                // Reconstruct category results if missing
-                val cats = categoryResults.toMutableMap()
-                reconciled.answers.values.forEach { ans ->
-                    val cat = ans.category ?: "General"
-                    val existing = cats[cat] ?: CategoryResult(0, 0)
-                    cats[cat] = CategoryResult(
-                        attempted = existing.attempted + 1,
-                        correct = existing.correct + (if (ans.isCorrect == true) 1 else 0)
-                    )
+                // Cleanly compute fresh category results without duplication
+                val freshCats = computeCategoryResults(reconciled.answers)
+                synchronized(categoryResults) {
+                    categoryResults.clear()
+                    categoryResults.putAll(freshCats)
                 }
 
                 onComplete(
@@ -800,7 +820,7 @@ class QuizScreen(
                     reconciled.earnedXp,
                     reconciled.selectedOptions,
                     reconciled.answers,
-                    cats
+                    freshCats
                 )
             }
             return
@@ -824,6 +844,15 @@ class QuizScreen(
         SwingUtilities.invokeLater {
             if (isDisposed || isUpdatingLocally) return@invokeLater
 
+            // Re-verify guards on EDT to prevent race conditions if user clicked while fetch was in-flight
+            val currentLocalAnsweredKeys = synchronized(answersMap) { answersMap.keys.toSet() }
+            if (answered && reconciled.firstUnansweredIndex <= currentIndex) {
+                return@invokeLater
+            }
+            if (reconciled.answeredCount < currentLocalAnsweredKeys.size) {
+                return@invokeLater
+            }
+
             // Apply remote reconciled state
             synchronized(answersMap) {
                 reconciled.answers.forEach { (qid, ans) ->
@@ -835,17 +864,14 @@ class QuizScreen(
                     selectedOptionsList[i] = opt
                 }
             }
-            correctCount = reconciled.score
-            earnedXp = reconciled.earnedXp
+            correctCount = maxOf(correctCount, reconciled.score)
+            earnedXp = maxOf(earnedXp, reconciled.earnedXp)
 
-            // Update category results
-            reconciled.answers.values.forEach { ans ->
-                val cat = ans.category ?: "General"
-                val existing = categoryResults[cat] ?: CategoryResult(0, 0)
-                categoryResults[cat] = CategoryResult(
-                    attempted = existing.attempted + 1,
-                    correct = existing.correct + (if (ans.isCorrect == true) 1 else 0)
-                )
+            // Recompute category results cleanly
+            val freshCats = computeCategoryResults(reconciled.answers)
+            synchronized(categoryResults) {
+                categoryResults.clear()
+                categoryResults.putAll(freshCats)
             }
 
             // Persist local partial session
@@ -869,4 +895,5 @@ class QuizScreen(
     internal fun getCorrectCount(): Int = correctCount
     internal fun getEarnedXp(): Int = earnedXp
     internal fun isAnswered(): Boolean = answered
+    internal fun getCategoryResults(): Map<String, CategoryResult> = synchronized(categoryResults) { categoryResults.toMap() }
 }

@@ -231,4 +231,110 @@ class QuizScreenSyncTest {
         assertDoesNotThrow { screen.dispose() }
         assertDoesNotThrow { screen.dispose() } // multiple dispose calls safe
     }
+
+    @Test
+    fun `test handleRemoteSubmissionUpdate recomputes categoryResults cleanly without duplicate counts across sync ticks`() {
+        val screen = QuizScreen(
+            questions = sampleQuestions,
+            initialIndex = 0,
+            project = null,
+            onComplete = { _, _, _, _, _, _ -> },
+            onError = {}
+        )
+
+        val frame = JFrame()
+        frame.contentPane.add(screen)
+        frame.setSize(400, 600)
+
+        // Tick 1: Q1 (Compose) answered
+        val sub1 = DailySubmissionRow(
+            id = "sub-1",
+            user_id = "u1",
+            date = "2026-10-29",
+            score = 1,
+            earned_xp = 10,
+            selected_options = listOf(0, -1, -1, -1, -1),
+            answers = mapOf(
+                "q1" to UserAnswerPayload(questionId = "q1", category = "Compose", selectedOption = "A", isCorrect = true, xpEarned = 10)
+            )
+        )
+        screen.handleRemoteSubmissionUpdate(sub1, null)
+        var latch = CountDownLatch(1)
+        SwingUtilities.invokeLater { latch.countDown() }
+        latch.await(2, TimeUnit.SECONDS)
+
+        var cats = screen.getCategoryResults()
+        assertEquals(1, cats["Compose"]?.attempted)
+        assertEquals(1, cats["Compose"]?.correct)
+
+        // Tick 2: Q2 (Coroutines) answered alongside Q1
+        val sub2 = DailySubmissionRow(
+            id = "sub-2",
+            user_id = "u1",
+            date = "2026-10-29",
+            score = 2,
+            earned_xp = 35,
+            selected_options = listOf(0, 1, -1, -1, -1),
+            answers = mapOf(
+                "q1" to UserAnswerPayload(questionId = "q1", category = "Compose", selectedOption = "A", isCorrect = true, xpEarned = 10),
+                "q2" to UserAnswerPayload(questionId = "q2", category = "Coroutines", selectedOption = "B", isCorrect = true, xpEarned = 25)
+            )
+        )
+        screen.handleRemoteSubmissionUpdate(sub2, null)
+        latch = CountDownLatch(1)
+        SwingUtilities.invokeLater { latch.countDown() }
+        latch.await(2, TimeUnit.SECONDS)
+
+        cats = screen.getCategoryResults()
+        // Compose must remain 1 (not duplicated to 2!), Coroutines must be 1
+        assertEquals(1, cats["Compose"]?.attempted, "Compose attempted count should not be duplicated across ticks")
+        assertEquals(1, cats["Compose"]?.correct, "Compose correct count should not be duplicated across ticks")
+        assertEquals(1, cats["Coroutines"]?.attempted)
+        assertEquals(1, cats["Coroutines"]?.correct)
+
+        screen.dispose()
+    }
+
+    @Test
+    fun `test handleRemoteSubmissionUpdate preserves local answer if local option was chosen while sync was in flight`() {
+        val screen = QuizScreen(
+            questions = sampleQuestions,
+            initialIndex = 0,
+            initialSelectedOptions = listOf(0, -1, -1, -1, -1),
+            initialAnswers = mapOf(
+                "q1" to UserAnswerPayload(questionId = "q1", selectedOption = "A", isCorrect = true, xpEarned = 10)
+            ),
+            project = null,
+            onComplete = { _, _, _, _, _, _ -> },
+            onError = {}
+        )
+
+        val frame = JFrame()
+        frame.contentPane.add(screen)
+        frame.setSize(400, 600)
+
+        // Stale remote arrives with 0 answers (from before local answered Q1)
+        val staleRemoteSub = DailySubmissionRow(
+            id = "sub-stale",
+            user_id = "test-user",
+            date = "2026-10-29",
+            score = 0,
+            earned_xp = 0,
+            selected_options = listOf(-1, -1, -1, -1, -1),
+            answers = emptyMap()
+        )
+
+        screen.handleRemoteSubmissionUpdate(staleRemoteSub, null)
+
+        val syncLatch = CountDownLatch(1)
+        SwingUtilities.invokeLater { syncLatch.countDown() }
+        syncLatch.await(1, TimeUnit.SECONDS)
+
+        // Local answer Q1 must be preserved and not wiped out by stale remote
+        assertEquals(1, screen.getCorrectCount(), "Local correct count must be preserved")
+        assertEquals(10, screen.getEarnedXp(), "Local earned XP must be preserved")
+        assertEquals(1, screen.getAnswersMap().size, "Answers map must preserve local answer")
+
+        screen.dispose()
+    }
 }
