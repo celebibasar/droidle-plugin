@@ -342,4 +342,31 @@ class ResultScreenLocalizationTest {
         val trLabels = findAllLabels(screen)
         assertTrue(trLabels.any { it.contains("Kusursuz! 2'de 2 Yaptın! 🎉") }, "Should say '2'de 2' for 2 questions")
     }
+
+    @Test
+    fun `test ResultScreen and refreshLanguage visibility and open modifiers for tool window panel resolution`() {
+        val clazz = ResultScreen::class.java
+        assertTrue(java.lang.reflect.Modifier.isPublic(clazz.modifiers), "ResultScreen must be public")
+        assertFalse(java.lang.reflect.Modifier.isFinal(clazz.modifiers), "ResultScreen must be open (non-final)")
+
+        val method = clazz.getMethod("refreshLanguage")
+        assertTrue(java.lang.reflect.Modifier.isPublic(method.modifiers), "refreshLanguage must be public")
+        assertFalse(java.lang.reflect.Modifier.isFinal(method.modifiers), "refreshLanguage must be open (non-final)")
+
+        // Verify invocation on nullable ResultScreen reference as in DroidleToolWindowPanel
+        var panelResultScreen: ResultScreen? = ResultScreen(
+            correctCount = 1,
+            questions = sampleQuestions,
+            earnedXp = 10,
+            onOpenWeb = {}
+        )
+        assertDoesNotThrow {
+            panelResultScreen?.refreshLanguage()
+        }
+        panelResultScreen = null
+        assertDoesNotThrow {
+            panelResultScreen?.refreshLanguage()
+        }
+    }
 }
+
