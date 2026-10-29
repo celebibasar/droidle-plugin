@@ -378,7 +378,9 @@ class DroidleToolWindowPanel(private val project: Project) : JPanel(BorderLayout
         val state = StateManager.getInstance()
         state.language = if (state.language == AppLanguage.TR) AppLanguage.EN else AppLanguage.TR
         header.refresh()
+        loadingScreen.refreshLanguage()
         quizScreen?.refreshLanguage()
+        resultScreen?.refreshLanguage()
     }
 
     private fun onLoginClick() {
