@@ -17,8 +17,8 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBUI
 import java.awt.*
-import java.awt.event.KeyAdapter
-import java.awt.event.KeyEvent
+import java.awt.event.*
+import java.beans.PropertyChangeListener
 import java.time.Instant
 import javax.swing.*
 import javax.swing.border.CompoundBorder
@@ -62,6 +62,14 @@ class QuizScreen(
     private val selectedOptionsList = MutableList(questions.size) { -1 }
     private val answersMap = mutableMapOf<String, UserAnswerPayload>()
     private val categoryResults = mutableMapOf<String, CategoryResult>()
+
+    // Sync polling & focus listeners for real-time cross-device sync
+    private var syncTimer: javax.swing.Timer? = null
+    private var isDisposed = false
+    private var isCheckingSync = false
+    @Volatile private var isUpdatingLocally = false
+    private var windowFocusListener: WindowFocusListener? = null
+    private var windowPropertyListener: PropertyChangeListener? = null
 
     // UI Components
     private fun currentLanguage(): AppLanguage = try {
@@ -465,6 +473,7 @@ class QuizScreen(
 
     private fun onOptionSelected(key: String, question: Question) {
         if (answered) return
+        isUpdatingLocally = true
         answered = true
         selectedKey = key
 
@@ -539,25 +548,29 @@ class QuizScreen(
 
         // 3. Background asynchronous sync (Instant progress to Supabase + server verification)
         ApplicationManager.getApplication().executeOnPooledThread {
-            // A: Sync instant progress to Supabase daily_submissions
-            syncPartialProgressToSupabase()
-
-            // B: Verify answer with server API for anti-cheat verification / enriched doc links
             try {
-                val response = DroidleService.getInstance().verifyAnswer(question.id, key)
-                SwingUtilities.invokeLater {
-                    // Update doc links from server if available
-                    if (response.docLinks.isNotEmpty()) {
-                        explanationCard.show(
-                            correct = isCorrect,
-                            text = explanation,
-                            earnedXp = xp,
-                            docLinks = response.docLinks
-                        )
+                // A: Sync instant progress to Supabase daily_submissions
+                syncPartialProgressToSupabase()
+
+                // B: Verify answer with server API for anti-cheat verification / enriched doc links
+                try {
+                    val response = DroidleService.getInstance().verifyAnswer(question.id, key)
+                    SwingUtilities.invokeLater {
+                        // Update doc links from server if available
+                        if (response.docLinks.isNotEmpty()) {
+                            explanationCard.show(
+                                correct = isCorrect,
+                                text = explanation,
+                                earnedXp = xp,
+                                docLinks = response.docLinks
+                            )
+                        }
                     }
+                } catch (_: Exception) {
+                    // Ignore API verification error since local evaluation is already rendered
                 }
-            } catch (_: Exception) {
-                // Ignore API verification error since local evaluation is already rendered
+            } finally {
+                isUpdatingLocally = false
             }
         }
     }
@@ -638,4 +651,222 @@ class QuizScreen(
             showQuestion(next)
         }
     }
+
+    // ── Real-Time Cross-Device Synchronization (Web <-> Plugin) ────────────────
+
+    override fun addNotify() {
+        super.addNotify()
+        startSyncPoller()
+        setupFocusListeners()
+    }
+
+    override fun removeNotify() {
+        stopSyncPoller()
+        super.removeNotify()
+    }
+
+    fun dispose() {
+        isDisposed = true
+        stopSyncPoller()
+    }
+
+    fun startSyncPoller() {
+        if (syncTimer != null || isDisposed) return
+        syncTimer = javax.swing.Timer(3000) {
+            if (!isDisposed && isShowing && !isUpdatingLocally) {
+                checkRemoteSync()
+            }
+        }.apply {
+            isRepeats = true
+            start()
+        }
+    }
+
+    fun stopSyncPoller() {
+        syncTimer?.stop()
+        syncTimer = null
+        removeFocusListeners()
+    }
+
+    private fun setupFocusListeners() {
+        if (windowFocusListener != null) return
+
+        val wfl = object : WindowFocusListener {
+            override fun windowGainedFocus(e: WindowEvent?) {
+                if (!isDisposed && !isUpdatingLocally) {
+                    checkRemoteSync()
+                }
+            }
+            override fun windowLostFocus(e: WindowEvent?) {}
+        }
+        windowFocusListener = wfl
+
+        val win = SwingUtilities.getWindowAncestor(this)
+        win?.addWindowFocusListener(wfl)
+
+        addHierarchyListener { e ->
+            if ((e.changeFlags and HierarchyEvent.SHOWING_CHANGED.toLong()) != 0L && isShowing) {
+                val currentWin = SwingUtilities.getWindowAncestor(this)
+                if (currentWin != null && windowFocusListener != null) {
+                    currentWin.removeWindowFocusListener(windowFocusListener)
+                    currentWin.addWindowFocusListener(windowFocusListener)
+                }
+                if (!isDisposed && !isUpdatingLocally) {
+                    checkRemoteSync()
+                }
+            }
+        }
+
+        val propListener = PropertyChangeListener { evt ->
+            if (evt.propertyName == "activeWindow" && evt.newValue != null && isShowing && !isDisposed && !isUpdatingLocally) {
+                checkRemoteSync()
+            }
+        }
+        windowPropertyListener = propListener
+        try {
+            KeyboardFocusManager.getCurrentKeyboardFocusManager().addPropertyChangeListener("activeWindow", propListener)
+        } catch (_: Throwable) {
+            // Ignore if restricted
+        }
+    }
+
+    private fun removeFocusListeners() {
+        windowPropertyListener?.let {
+            try {
+                KeyboardFocusManager.getCurrentKeyboardFocusManager().removePropertyChangeListener("activeWindow", it)
+            } catch (_: Throwable) {}
+            windowPropertyListener = null
+        }
+        val window = SwingUtilities.getWindowAncestor(this)
+        windowFocusListener?.let {
+            window?.removeWindowFocusListener(it)
+            windowFocusListener = null
+        }
+    }
+
+    fun checkRemoteSync() {
+        if (isDisposed || isCheckingSync || isUpdatingLocally) return
+        val state = try { StateManager.getInstance() } catch (_: Throwable) { null } ?: return
+        val userId = state.getUserId()
+        if (userId.isNullOrBlank()) return
+        val today = state.todayIstanbulString()
+
+        isCheckingSync = true
+        ApplicationManager.getApplication().executeOnPooledThread {
+            try {
+                val supabase = SupabaseService.getInstance()
+                val remoteSub = supabase.fetchTodaySubmission(userId, today)
+                if (remoteSub != null && !isDisposed) {
+                    handleRemoteSubmissionUpdate(remoteSub, state)
+                }
+            } catch (_: Exception) {
+                // Background sync failure gracefully ignored
+            } finally {
+                isCheckingSync = false
+            }
+        }
+    }
+
+    internal fun handleRemoteSubmissionUpdate(remoteSub: DailySubmissionRow, state: StateManager? = null) {
+        val reconciled = reconcileDailySubmission(remoteSub, questions)
+
+        // Case 1: Quiz is completed remotely (e.g. all 5 questions answered on web)
+        if (reconciled.isComplete) {
+            SwingUtilities.invokeLater {
+                if (isDisposed) return@invokeLater
+                state?.syncFromServer(
+                    correctCount = reconciled.score,
+                    totalCount = questions.size,
+                    earnedXp = reconciled.earnedXp,
+                    selectedOptions = reconciled.selectedOptions,
+                    answers = reconciled.answers
+                )
+                stopSyncPoller()
+
+                // Reconstruct category results if missing
+                val cats = categoryResults.toMutableMap()
+                reconciled.answers.values.forEach { ans ->
+                    val cat = ans.category ?: "General"
+                    val existing = cats[cat] ?: CategoryResult(0, 0)
+                    cats[cat] = CategoryResult(
+                        attempted = existing.attempted + 1,
+                        correct = existing.correct + (if (ans.isCorrect == true) 1 else 0)
+                    )
+                }
+
+                onComplete(
+                    reconciled.score,
+                    questions,
+                    reconciled.earnedXp,
+                    reconciled.selectedOptions,
+                    reconciled.answers,
+                    cats
+                )
+            }
+            return
+        }
+
+        // Case 2: In-progress quiz update from web
+        val localAnsweredKeys = synchronized(answersMap) { answersMap.keys.toSet() }
+        val remoteHasNewAnswers = reconciled.answers.keys.any { qid -> !localAnsweredKeys.contains(qid) }
+
+        if (!remoteHasNewAnswers && reconciled.answeredCount <= localAnsweredKeys.size) {
+            // No new remote answers
+            return
+        }
+
+        // Guard: if user is actively viewing explanation on the current question in the plugin,
+        // and remote has NOT answered questions beyond current question, do not advance.
+        if (answered && reconciled.firstUnansweredIndex <= currentIndex) {
+            return
+        }
+
+        SwingUtilities.invokeLater {
+            if (isDisposed || isUpdatingLocally) return@invokeLater
+
+            // Apply remote reconciled state
+            synchronized(answersMap) {
+                reconciled.answers.forEach { (qid, ans) ->
+                    answersMap[qid] = ans
+                }
+            }
+            reconciled.selectedOptions.forEachIndexed { i, opt ->
+                if (i < selectedOptionsList.size && opt in 0..3) {
+                    selectedOptionsList[i] = opt
+                }
+            }
+            correctCount = reconciled.score
+            earnedXp = reconciled.earnedXp
+
+            // Update category results
+            reconciled.answers.values.forEach { ans ->
+                val cat = ans.category ?: "General"
+                val existing = categoryResults[cat] ?: CategoryResult(0, 0)
+                categoryResults[cat] = CategoryResult(
+                    attempted = existing.attempted + 1,
+                    correct = existing.correct + (if (ans.isCorrect == true) 1 else 0)
+                )
+            }
+
+            // Persist local partial session
+            state?.savePartialSession(
+                today = state.todayIstanbul(),
+                score = correctCount,
+                earnedXp = earnedXp,
+                selectedOptions = selectedOptionsList.toList(),
+                answers = answersMap.toMap()
+            )
+
+            // Advance to the next unanswered question
+            val nextIdx = reconciled.firstUnansweredIndex.coerceIn(0, (questions.size - 1).coerceAtLeast(0))
+            showQuestion(nextIdx)
+        }
+    }
+
+    internal fun getCurrentIndex(): Int = currentIndex
+    internal fun getAnswersMap(): Map<String, UserAnswerPayload> = synchronized(answersMap) { answersMap.toMap() }
+    internal fun getSelectedOptions(): List<Int> = selectedOptionsList.toList()
+    internal fun getCorrectCount(): Int = correctCount
+    internal fun getEarnedXp(): Int = earnedXp
+    internal fun isAnswered(): Boolean = answered
 }

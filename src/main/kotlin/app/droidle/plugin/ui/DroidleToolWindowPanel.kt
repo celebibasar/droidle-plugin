@@ -248,7 +248,11 @@ class DroidleToolWindowPanel(private val project: Project) : JPanel(BorderLayout
         initialSelectedOptions: List<Int> = emptyList(),
         initialAnswers: Map<String, UserAnswerPayload> = emptyMap()
     ) {
-        if (quizScreen != null) deck.remove(quizScreen)
+        if (quizScreen != null) {
+            quizScreen?.dispose()
+            deck.remove(quizScreen)
+            quizScreen = null
+        }
         quizScreen = QuizScreen(
             questions = questions,
             initialIndex = initialIndex,
@@ -270,6 +274,11 @@ class DroidleToolWindowPanel(private val project: Project) : JPanel(BorderLayout
         selectedOptions: List<Int>,
         answers: Map<String, UserAnswerPayload>
     ) {
+        if (quizScreen != null) {
+            quizScreen?.dispose()
+            deck.remove(quizScreen)
+            quizScreen = null
+        }
         if (resultScreen != null) deck.remove(resultScreen)
         resultScreen = ResultScreen(
             correctCount = correctCount,
@@ -386,6 +395,10 @@ class DroidleToolWindowPanel(private val project: Project) : JPanel(BorderLayout
     private fun showError(msg: String) {
         errorScreen.setMessage(msg)
         show(Screen.ERROR)
+    }
+
+    fun triggerSync() {
+        quizScreen?.checkRemoteSync()
     }
 
     private fun show(name: String) {
