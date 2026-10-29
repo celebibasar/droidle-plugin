@@ -53,22 +53,27 @@ open class CompactHeader(
         val state = try { StateManager.getInstance() } catch (_: Throwable) { null }
         val initialLang = overrideLanguage ?: state?.language ?: AppLanguage.TR
 
-        // ── Left: Logo + Dot ──────────────────────────────────────────────────
+        val clickLogo = object : MouseAdapter() {
+            override fun mouseClicked(e: MouseEvent?) {
+                BrowserUtil.browse("https://droidle.vercel.app")
+            }
+        }
+
+        val logoText = JBLabel("droidle").apply {
+            font = JBUI.Fonts.label(13f).deriveFont(Font.BOLD)
+            foreground = JBUI.CurrentTheme.Label.foreground()
+            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            addMouseListener(clickLogo)
+        }
+        val dot = GlowingEmeraldDot().apply {
+            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            addMouseListener(clickLogo)
+        }
+
         leftPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(2), 0)).apply {
             isOpaque = false
             cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-            addMouseListener(object : MouseAdapter() {
-                override fun mouseClicked(e: MouseEvent?) {
-                    BrowserUtil.browse("https://droidle.vercel.app")
-                }
-            })
-
-            val logoText = JBLabel("droidle").apply {
-                font = JBUI.Fonts.label(13f).deriveFont(Font.BOLD)
-                foreground = JBUI.CurrentTheme.Label.foreground()
-            }
-            val dot = GlowingEmeraldDot()
-
+            addMouseListener(clickLogo)
             add(logoText)
             add(dot)
         }
@@ -145,7 +150,11 @@ open class CompactHeader(
         avatar.isVisible = loggedIn
         avatar.updateProfile(currentAvatarUrl, currentUsername, currentLang)
 
-        leftPanel.toolTipText = if (currentLang == AppLanguage.EN) "Open droidle web app" else "droidle web uygulamasını aç"
+        val logoTip = if (currentLang == AppLanguage.EN) "Open droidle web app" else "droidle web uygulamasını aç"
+        leftPanel.toolTipText = logoTip
+        for (i in 0 until leftPanel.componentCount) {
+            (leftPanel.getComponent(i) as? JComponent)?.toolTipText = logoTip
+        }
 
         revalidate()
         repaint()

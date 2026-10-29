@@ -70,6 +70,10 @@ class CircularAvatar(
             AvatarImageCache.getOrLoad(avatarUrl!!) { repaint() }
         }
 
+        val showAvatarMenu = { e: MouseEvent? ->
+            showMenu(e?.component ?: this@CircularAvatar, e?.x ?: 0, e?.y ?: sizePx)
+        }
+
         addMouseListener(object : MouseAdapter() {
             override fun mouseEntered(e: MouseEvent?) {
                 isHovered = true
@@ -80,17 +84,28 @@ class CircularAvatar(
                 repaint()
             }
             override fun mouseClicked(e: MouseEvent?) {
-                showMenu(e?.component ?: this@CircularAvatar, e?.x ?: 0, e?.y ?: sizePx)
+                showAvatarMenu(e)
+            }
+            override fun mousePressed(e: MouseEvent) {
+                if (e.isPopupTrigger) {
+                    showAvatarMenu(e)
+                }
+            }
+            override fun mouseReleased(e: MouseEvent) {
+                if (e.isPopupTrigger) {
+                    showAvatarMenu(e)
+                }
             }
         })
     }
 
     internal fun updateToolTip() {
         val isEn = lang == AppLanguage.EN
+        val cleanUser = username?.trim()?.takeIf { it.isNotEmpty() }
         toolTipText = if (isEn) {
-            username?.let { "Profile (@$it)" } ?: "Profile"
+            cleanUser?.let { "Profile (@$it)" } ?: "Profile"
         } else {
-            username?.let { "Profil (@$it)" } ?: "Profil"
+            cleanUser?.let { "Profil (@$it)" } ?: "Profil"
         }
     }
 
@@ -122,7 +137,8 @@ class CircularAvatar(
     internal fun createPopupMenu(): JPopupMenu {
         val menu = JPopupMenu()
 
-        val userItem = JMenuItem(username?.let { "@$it" } ?: getProfileFallbackText(lang)).apply {
+        val cleanUser = username?.trim()?.takeIf { it.isNotEmpty() }
+        val userItem = JMenuItem(cleanUser?.let { "@$it" } ?: getProfileFallbackText(lang)).apply {
             isEnabled = false
             font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
         }
@@ -173,7 +189,7 @@ class CircularAvatar(
                 g2.stroke = BasicStroke(JBUI.scale(1).toFloat())
                 g2.draw(circle)
 
-                val initial = username?.firstOrNull()?.uppercaseChar()?.toString() ?: "D"
+                val initial = username?.trim()?.firstOrNull()?.uppercaseChar()?.toString() ?: "D"
                 g2.font = JBUI.Fonts.label(11f).deriveFont(Font.BOLD)
                 val fm = g2.fontMetrics
                 val tx = (width - fm.stringWidth(initial)) / 2

@@ -382,7 +382,30 @@ class LayoutAndFormattingTest {
         val itemsEnNull = (0 until menuEnNull.componentCount).mapNotNull { menuEnNull.getComponent(it) as? JMenuItem }
         assertEquals("My Profile", itemsEnNull[0].text)
 
-        // 5. Dynamic updateProfile with language change
+        // 5. Blank/whitespace username fallback in both languages
+        val avatarWhitespaceTr = CircularAvatar(
+            avatarUrl = null,
+            username = "   ",
+            lang = AppLanguage.TR,
+            onLogout = {}
+        )
+        assertEquals("Profil", avatarWhitespaceTr.toolTipText)
+        val menuTrBlank = avatarWhitespaceTr.createPopupMenu()
+        val itemsTrBlank = (0 until menuTrBlank.componentCount).mapNotNull { menuTrBlank.getComponent(it) as? JMenuItem }
+        assertEquals("Profilim", itemsTrBlank[0].text)
+
+        val avatarEmptyEn = CircularAvatar(
+            avatarUrl = null,
+            username = "",
+            lang = AppLanguage.EN,
+            onLogout = {}
+        )
+        assertEquals("Profile", avatarEmptyEn.toolTipText)
+        val menuEnBlank = avatarEmptyEn.createPopupMenu()
+        val itemsEnBlank = (0 until menuEnBlank.componentCount).mapNotNull { menuEnBlank.getComponent(it) as? JMenuItem }
+        assertEquals("My Profile", itemsEnBlank[0].text)
+
+        // 6. Dynamic updateProfile with language change
         avatarTr.updateProfile(newAvatarUrl = "https://example.com/avatar.png", newUsername = "alice", newLang = AppLanguage.EN)
         assertEquals("Profile (@alice)", avatarTr.toolTipText)
         val updatedMenu = avatarTr.createPopupMenu()
@@ -413,6 +436,11 @@ class LayoutAndFormattingTest {
         assertEquals("TR", header.langButton.text)
         assertEquals("Dil Değiştir", header.langButton.toolTipText)
         assertEquals("droidle web uygulamasını aç", header.leftPanel.toolTipText)
+        for (i in 0 until header.leftPanel.componentCount) {
+            val child = header.leftPanel.getComponent(i) as javax.swing.JComponent
+            assertEquals("droidle web uygulamasını aç", child.toolTipText, "Logo child $i tooltip must match in TR")
+            assertTrue(child.mouseListeners.isNotEmpty(), "Logo child $i must have mouse listener for clicking")
+        }
         assertEquals("3 günlük seri", header.streakPill.toolTipText)
 
         // Switch to English (logged in as 'basar', streak 5)
@@ -430,6 +458,10 @@ class LayoutAndFormattingTest {
         assertEquals("EN", header.langButton.text)
         assertEquals("Switch Language", header.langButton.toolTipText)
         assertEquals("Open droidle web app", header.leftPanel.toolTipText)
+        for (i in 0 until header.leftPanel.componentCount) {
+            val child = header.leftPanel.getComponent(i) as javax.swing.JComponent
+            assertEquals("Open droidle web app", child.toolTipText, "Logo child $i tooltip must match in EN")
+        }
         assertEquals("5 days streak", header.streakPill.toolTipText)
 
         // Check popup menu on the header avatar in English
@@ -453,6 +485,10 @@ class LayoutAndFormattingTest {
         assertEquals("TR", header.langButton.text)
         assertEquals("Dil Değiştir", header.langButton.toolTipText)
         assertEquals("droidle web uygulamasını aç", header.leftPanel.toolTipText)
+        for (i in 0 until header.leftPanel.componentCount) {
+            val child = header.leftPanel.getComponent(i) as javax.swing.JComponent
+            assertEquals("droidle web uygulamasını aç", child.toolTipText, "Logo child $i tooltip must match in TR")
+        }
         assertEquals("1 günlük seri", header.streakPill.toolTipText)
         assertEquals("Profil (@basar)", header.avatar.toolTipText)
 

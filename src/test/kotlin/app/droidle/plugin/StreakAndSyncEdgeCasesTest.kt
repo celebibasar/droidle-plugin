@@ -4,9 +4,13 @@ import app.droidle.plugin.model.DailySubmissionPayload
 import app.droidle.plugin.model.DailySubmissionRow
 import app.droidle.plugin.model.Question
 import app.droidle.plugin.model.UserAnswerPayload
+import app.droidle.plugin.state.AppLanguage
+import app.droidle.plugin.ui.components.CircularAvatar
+import app.droidle.plugin.ui.components.CompactHeader
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import java.time.LocalDate
+import javax.swing.JMenuItem
 
 class StreakAndSyncEdgeCasesTest {
 
@@ -201,6 +205,61 @@ class StreakAndSyncEdgeCasesTest {
         // selectedOptions fallback with 3 items vs 5 items
         assertFalse(isEligibleForCompletion(emptyMap(), listOf(0, 1, 2, -1, -1)), "3 selected options must NOT complete")
         assertTrue(isEligibleForCompletion(emptyMap(), listOf(0, 1, 2, 3, 0)), "5 selected options MUST complete")
+    }
+
+    @Test
+    fun `test profile avatar menu items and CompactHeader tooltips in TR and EN`() {
+        // Test avatar popup in TR
+        val avatarTr = CircularAvatar(avatarUrl = null, username = "celebibasar", lang = AppLanguage.TR, onLogout = {})
+        val menuTr = avatarTr.createPopupMenu()
+        val itemsTr = (0 until menuTr.componentCount).mapNotNull { menuTr.getComponent(it) as? JMenuItem }
+        assertEquals(3, itemsTr.size)
+        assertEquals("@celebibasar", itemsTr[0].text)
+        assertEquals("Liderlik Tablosu", itemsTr[1].text)
+        assertEquals("Çıkış Yap", itemsTr[2].text)
+
+        // Test avatar popup in EN
+        val avatarEn = CircularAvatar(avatarUrl = null, username = "celebibasar", lang = AppLanguage.EN, onLogout = {})
+        val menuEn = avatarEn.createPopupMenu()
+        val itemsEn = (0 until menuEn.componentCount).mapNotNull { menuEn.getComponent(it) as? JMenuItem }
+        assertEquals(3, itemsEn.size)
+        assertEquals("@celebibasar", itemsEn[0].text)
+        assertEquals("Leaderboard", itemsEn[1].text)
+        assertEquals("Sign Out", itemsEn[2].text)
+
+        // Test CompactHeader tooltips and buttons in both TR and EN
+        val header = CompactHeader(onLanguageToggle = {}, onLoginClick = {}, onLogoutClick = {})
+
+        // TR
+        header.overrideLanguage = AppLanguage.TR
+        header.overrideLoggedIn = false
+        header.overrideStreak = 2
+        header.refresh()
+
+        assertEquals("Giriş Yap", header.loginButton.text)
+        assertEquals("GitHub ile giriş yap", header.loginButton.toolTipText)
+        assertEquals("2 günlük seri", header.streakPill.toolTipText)
+        assertEquals("Dil Değiştir", header.langButton.toolTipText)
+        assertEquals("droidle web uygulamasını aç", header.leftPanel.toolTipText)
+
+        // EN
+        header.overrideLanguage = AppLanguage.EN
+        header.overrideLoggedIn = true
+        header.overrideUsername = "celebibasar"
+        header.overrideStreak = 1
+        header.refresh()
+
+        assertEquals("Sign In", header.loginButton.text)
+        assertEquals("Sign in with GitHub", header.loginButton.toolTipText)
+        assertEquals("1 day streak", header.streakPill.toolTipText)
+        assertEquals("Switch Language", header.langButton.toolTipText)
+        assertEquals("Open droidle web app", header.leftPanel.toolTipText)
+        assertEquals("Profile (@celebibasar)", header.avatar.toolTipText)
+
+        val headerMenuEn = header.avatar.createPopupMenu()
+        val headerItemsEn = (0 until headerMenuEn.componentCount).mapNotNull { headerMenuEn.getComponent(it) as? JMenuItem }
+        assertEquals("Leaderboard", headerItemsEn[1].text)
+        assertEquals("Sign Out", headerItemsEn[2].text)
     }
 }
 
