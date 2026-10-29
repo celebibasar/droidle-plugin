@@ -55,7 +55,7 @@ open class CompactHeader(
 
         val clickLogo = object : MouseAdapter() {
             override fun mouseClicked(e: MouseEvent?) {
-                BrowserUtil.browse("https://droidle.vercel.app")
+                BrowserUtil.browse("https://droidle.dev")
             }
         }
 

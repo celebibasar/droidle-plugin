@@ -30,8 +30,12 @@ class DroidleLocalAuthServer : AutoCloseable {
         try {
             val s = HttpServer.create(InetSocketAddress("127.0.0.1", DroidleAuthProtocolHandler.CALLBACK_PORT), 0)
             s.createContext("/auth") { exchange ->
-                // CORS — allow the Vercel app to POST here
-                exchange.responseHeaders.add("Access-Control-Allow-Origin", "https://droidle.vercel.app")
+                // CORS — allow both custom domain (droidle.dev) and vercel fallback
+                val origin = exchange.requestHeaders.getFirst("Origin")
+                val allowedOrigins = setOf("https://droidle.dev", "https://www.droidle.dev", "https://droidle.vercel.app")
+                val effectiveOrigin = if (origin in allowedOrigins) origin else "https://droidle.dev"
+                exchange.responseHeaders.add("Access-Control-Allow-Origin", effectiveOrigin)
+                exchange.responseHeaders.add("Vary", "Origin")
                 exchange.responseHeaders.add("Access-Control-Allow-Methods", "POST, OPTIONS")
                 exchange.responseHeaders.add("Access-Control-Allow-Headers", "Content-Type")
 

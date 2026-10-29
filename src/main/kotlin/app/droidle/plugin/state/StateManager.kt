@@ -15,7 +15,7 @@ private val ISTANBUL_ZONE = ZoneId.of("Europe/Istanbul")
 private val DATE_FMT = DateTimeFormatter.ISO_LOCAL_DATE
 
 data class DroidleSettings(
-    val apiBaseUrl: String = "https://droidle.vercel.app"
+    val apiBaseUrl: String = "https://droidle.dev"
 )
 
 enum class AppLanguage(val code: String, val label: String) {
@@ -46,7 +46,7 @@ class StateManager {
     // ── Settings ──────────────────────────────────────────────────────────────
 
     var settings: DroidleSettings
-        get() = DroidleSettings(apiBaseUrl = props.getValue(KEY_API_URL, "https://droidle.vercel.app"))
+        get() = DroidleSettings(apiBaseUrl = props.getValue(KEY_API_URL, "https://droidle.dev"))
         set(value) { props.setValue(KEY_API_URL, value.apiBaseUrl) }
 
     // ── Streak (Europe/Istanbul, mirrors web calculateStreak()) ───────────────

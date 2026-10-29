@@ -287,7 +287,7 @@ class DroidleToolWindowPanel(private val project: Project) : JPanel(BorderLayout
             selectedOptions = selectedOptions,
             answers = answers,
             project = project,
-            onOpenWeb = { BrowserUtil.browse("https://droidle.vercel.app/leaderboard") }
+            onOpenWeb = { BrowserUtil.browse("https://droidle.dev/leaderboard") }
         )
         deck.add(resultScreen!!, Screen.RESULT)
         deck.revalidate()
@@ -384,7 +384,7 @@ class DroidleToolWindowPanel(private val project: Project) : JPanel(BorderLayout
     }
 
     private fun onLoginClick() {
-        BrowserUtil.browse("https://droidle.vercel.app/login?source=plugin")
+        BrowserUtil.browse("https://droidle.dev/login?source=plugin")
     }
 
     private fun onLogoutClick() {

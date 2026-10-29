@@ -147,7 +147,7 @@ class CircularAvatar(
 
         val leaderboardItem = JMenuItem(getLeaderboardText(lang)).apply {
             font = JBUI.Fonts.smallFont()
-            addActionListener { BrowserUtil.browse("https://droidle.vercel.app/leaderboard") }
+            addActionListener { BrowserUtil.browse("https://droidle.dev/leaderboard") }
         }
         menu.add(leaderboardItem)
 

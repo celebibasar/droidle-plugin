@@ -1,11 +1,11 @@
 <idea-plugin>
     <id>app.droidle.plugin</id>
     <name>Droidle — Daily Android Quiz</name>
-    <vendor email="basarcelebi02@gmail.com" url="https://droidle.vercel.app">Droidle</vendor>
+    <vendor email="basarcelebi02@gmail.com" url="https://droidle.dev">Droidle</vendor>
 
     <description><![CDATA[
         <p><b>Start your Android dev day with a 5-question quiz — right inside Android Studio.</b></p>
-        <p>Droidle opens droidle.vercel.app in a sidebar panel so you can answer today's 5 Android questions without leaving the IDE.</p>
+        <p>Droidle opens droidle.dev in a sidebar panel so you can answer today's 5 Android questions without leaving the IDE.</p>
         <p>Topics: Jetpack Compose, Coroutines, Architecture, Android Internals, AI Prompting.</p>
         <p>A daily reminder balloon appears when you open your project — never miss a day.</p>
     ]]></description>
