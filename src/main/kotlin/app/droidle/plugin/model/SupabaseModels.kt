@@ -1,5 +1,6 @@
 package app.droidle.plugin.model
 
+import app.droidle.plugin.state.AppLanguage
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.descriptors.SerialDescriptor
@@ -7,6 +8,44 @@ import kotlinx.serialization.descriptors.buildClassSerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.*
+
+enum class ReportReason(val key: String) {
+    INCORRECT_ANSWER("incorrect_answer"),
+    BROKEN_LINK("broken_link"),
+    EXPLANATION_ERROR("explanation_error"),
+    TYPO("typo"),
+    OTHER("other");
+
+    fun localizedLabel(lang: AppLanguage): String = when (this) {
+        INCORRECT_ANSWER -> if (lang == AppLanguage.EN) "Incorrect answer or options" else "Cevap veya şıklar yanlış"
+        BROKEN_LINK -> if (lang == AppLanguage.EN) "Broken or invalid doc link" else "Kaynak veya doküman linki hatalı"
+        EXPLANATION_ERROR -> if (lang == AppLanguage.EN) "Inaccurate or misleading explanation" else "Açıklama hatalı veya eksik"
+        TYPO -> if (lang == AppLanguage.EN) "Typo or translation error" else "Yazım / çeviri hatası"
+        OTHER -> if (lang == AppLanguage.EN) "Other issue" else "Diğer bir sorun"
+    }
+
+    companion object {
+        fun fromKey(key: String?): ReportReason = values().firstOrNull { it.key == key } ?: INCORRECT_ANSWER
+    }
+}
+
+@Serializable
+data class QuestionReportPayload(
+    val id: String,
+    val question_id: String,
+    val user_id: String? = null,
+    val reason: String,
+    val details: String? = null,
+    val status: String = "pending"
+)
+
+@Serializable
+data class WebReportRequestPayload(
+    val questionId: String,
+    val reason: String,
+    val details: String? = null,
+    val userId: String? = null
+)
 
 @Serializable
 data class SupabaseProfile(

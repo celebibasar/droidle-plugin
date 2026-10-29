@@ -83,14 +83,52 @@ class ModernExplanationCard : JPanel() {
         if (this is JComponent) alignmentX = Component.LEFT_ALIGNMENT
     }
 
+    private var currentOnReportClick: (() -> Unit)? = null
+    private var currentIsEnglish: Boolean = false
+    private var isReported: Boolean = false
+
+    fun refreshReportedState(reported: Boolean) {
+        isReported = reported
+        updateReportPill()
+    }
+
+    private var reportPillComponent: JComponent? = null
+
+    private fun updateReportPill() {
+        val onReport = currentOnReportClick ?: return
+        reportPillComponent?.let { linksPanel.remove(it) }
+
+        val pill = ReportLinkPill(
+            text = if (isReported) (if (currentIsEnglish) "✓ Reported" else "✓ Bildirildi")
+                   else (if (currentIsEnglish) "Report Question ⚑" else "Soruyu Bildir ⚑"),
+            isReported = isReported,
+            onClick = {
+                if (!isReported) {
+                    onReport.invoke()
+                }
+            }
+        )
+        reportPillComponent = pill
+        linksPanel.add(pill)
+        linksPanel.isVisible = true
+        linksPanel.revalidate()
+        linksPanel.repaint()
+    }
+
     fun show(
         correct: Boolean,
         text: String,
         earnedXp: Int = 0,
         docLinks: List<DocLink> = emptyList(),
-        isEnglish: Boolean = false
+        isEnglish: Boolean = false,
+        isReported: Boolean = false,
+        onReportClick: (() -> Unit)? = null
     ) {
         isCorrect = correct
+        this.currentIsEnglish = isEnglish
+        this.currentOnReportClick = onReportClick
+        this.isReported = isReported
+
         statusIcon.icon = if (correct) AllIcons.General.InspectionsOK else AllIcons.General.BalloonError
         statusTitle.text = if (correct) {
             if (isEnglish) "Correct Answer!" else "Doğru Cevap!"
@@ -110,15 +148,20 @@ class ModernExplanationCard : JPanel() {
         explanationText.foreground = JBUI.CurrentTheme.Label.foreground()
 
         linksPanel.removeAll()
+        reportPillComponent = null
+
         if (docLinks.isNotEmpty()) {
             docLinks.forEach { link ->
                 val linkLabel = if (isEnglish) "Official Documentation ↗" else "Resmi Dokümana Git ↗"
                 val btn = DocLinkPill(linkLabel, link.url)
                 linksPanel.add(btn)
             }
-            linksPanel.isVisible = true
+        }
+
+        if (onReportClick != null) {
+            updateReportPill()
         } else {
-            linksPanel.isVisible = false
+            linksPanel.isVisible = linksPanel.componentCount > 0
         }
 
         isVisible = true
@@ -190,6 +233,60 @@ class ModernExplanationCard : JPanel() {
                 g2.fillRoundRect(0, 0, width, height, height, height)
 
                 g2.color = if (hovered) JBColor(Color(0x1D4ED8), Color(0x93C5FD)) else JBColor(Color(0x2563EB), Color(0x60A5FA))
+                g2.stroke = BasicStroke(1f)
+                g2.drawRoundRect(0, 0, width - 1, height - 1, height, height)
+            } finally {
+                g2.dispose()
+            }
+            super.paintComponent(g)
+        }
+    }
+
+    private class ReportLinkPill(
+        text: String,
+        private val isReported: Boolean,
+        onClick: () -> Unit
+    ) : JButton(text) {
+        private var hovered = false
+
+        init {
+            font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+            isBorderPainted = false
+            isContentAreaFilled = false
+            isFocusPainted = false
+            cursor = if (isReported) Cursor.getDefaultCursor() else Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            toolTipText = if (isReported) "Bu soru için bildirim gönderildi" else "Soruyu bildir"
+            foreground = if (isReported) JBColor(Color(0x059669), Color(0x34D399))
+                         else JBColor(Color(0xF43F5E), Color(0xFB7185))
+            border = JBUI.Borders.empty(JBUI.scale(4), JBUI.scale(10))
+            alignmentX = Component.LEFT_ALIGNMENT
+            addActionListener { onClick() }
+            addMouseListener(object : MouseAdapter() {
+                override fun mouseEntered(e: MouseEvent?) {
+                    if (!isReported) {
+                        hovered = true
+                        repaint()
+                    }
+                }
+                override fun mouseExited(e: MouseEvent?) {
+                    if (!isReported) {
+                        hovered = false
+                        repaint()
+                    }
+                }
+            })
+        }
+
+        override fun paintComponent(g: Graphics) {
+            val g2 = g.create() as Graphics2D
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                val baseCol = if (isReported) Color(0x10, 0xB9, 0x81) else Color(0xF4, 0x3F, 0x5E)
+                val bgAlpha = if (isReported) 25 else (if (hovered) 35 else 18)
+                g2.color = Color(baseCol.red, baseCol.green, baseCol.blue, bgAlpha)
+                g2.fillRoundRect(0, 0, width, height, height, height)
+
+                g2.color = if (isReported) Color(0x10, 0xB9, 0x81, 120) else Color(baseCol.red, baseCol.green, baseCol.blue, if (hovered) 120 else 60)
                 g2.stroke = BasicStroke(1f)
                 g2.drawRoundRect(0, 0, width - 1, height - 1, height, height)
             } finally {

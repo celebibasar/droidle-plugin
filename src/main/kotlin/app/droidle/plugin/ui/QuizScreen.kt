@@ -10,6 +10,7 @@ import app.droidle.plugin.ui.components.AutoWrappingHtmlLabel
 import app.droidle.plugin.ui.components.ModernCodeSnippet
 import app.droidle.plugin.ui.components.ModernExplanationCard
 import app.droidle.plugin.ui.components.ModernOptionCard
+import app.droidle.plugin.ui.components.QuestionReportButton
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
 import com.intellij.ui.JBColor
@@ -72,11 +73,22 @@ class QuizScreen(
     private var windowPropertyListener: PropertyChangeListener? = null
     private var hierarchyListener: HierarchyListener? = null
 
+    var overrideLanguage: AppLanguage? = null
+    var isQuestionReportedProvider: ((String) -> Boolean)? = null
+
     // UI Components
-    private fun currentLanguage(): AppLanguage = try {
+    private fun currentLanguage(): AppLanguage = overrideLanguage ?: try {
         StateManager.getInstance().language
     } catch (_: Throwable) {
         AppLanguage.TR
+    }
+
+    private fun isReported(questionId: String): Boolean {
+        return isQuestionReportedProvider?.invoke(questionId) ?: try {
+            StateManager.getInstance().isQuestionReported(questionId)
+        } catch (_: Throwable) {
+            false
+        }
     }
 
     private val dotsPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
@@ -110,6 +122,16 @@ class QuizScreen(
             }
             super.paintComponent(g)
         }
+    }
+
+    private val reportButton = QuestionReportButton(
+        currentQuestion = questions.getOrNull(currentIndex),
+        currentLang = currentLanguage(),
+        project = project,
+        compact = false,
+        isReportedChecker = { isReported(it) }
+    ) {
+        explanationCard.refreshReportedState(true)
     }
 
     private val questionLabel = AutoWrappingHtmlLabel("").apply {
@@ -296,6 +318,7 @@ class QuizScreen(
                 isOpaque = false
                 add(categoryLabel)
                 add(difficultyPill)
+                add(reportButton)
             }
             add(metaRight, BorderLayout.EAST)
         }
@@ -459,6 +482,8 @@ class QuizScreen(
         nextButton.isEnabled = false
         nextButton.text = nextButtonLabel(index, lang)
 
+        reportButton.updateQuestion(q, lang)
+
         revalidate()
         repaint()
         requestFocusInWindow()
@@ -528,12 +553,18 @@ class QuizScreen(
             card.isEnabled = false
         }
 
+        val isRep = isReported(question.id)
+
         explanationCard.show(
             correct = isCorrect,
             text = explanation,
             earnedXp = xp,
             docLinks = question.doc_links,
-            isEnglish = (lang == AppLanguage.EN)
+            isEnglish = (lang == AppLanguage.EN),
+            isReported = isRep,
+            onReportClick = {
+                openReportDialog(question)
+            }
         )
 
         footerPanel.isVisible = true
@@ -559,11 +590,17 @@ class QuizScreen(
                     SwingUtilities.invokeLater {
                         // Update doc links from server if available
                         if (response.docLinks.isNotEmpty()) {
+                            val rep = isReported(question.id)
                             explanationCard.show(
                                 correct = isCorrect,
                                 text = explanation,
                                 earnedXp = xp,
-                                docLinks = response.docLinks
+                                docLinks = response.docLinks,
+                                isEnglish = (lang == AppLanguage.EN),
+                                isReported = rep,
+                                onReportClick = {
+                                    openReportDialog(question)
+                                }
                             )
                         }
                     }
@@ -620,21 +657,41 @@ class QuizScreen(
             card.updateText(text)
         }
 
+        reportButton.updateQuestion(q, lang)
+
         if (answered) {
             val explanation = q.displayExplanation(lang) ?: ""
             val isCorrect = selectedKey.equals(q.resolvedCorrectAnswer, ignoreCase = true)
+            val isRep = isReported(q.id)
             explanationCard.show(
                 correct = isCorrect,
                 text = explanation,
                 earnedXp = if (isCorrect) q.xpValue else 0,
                 docLinks = q.doc_links,
-                isEnglish = (lang == AppLanguage.EN)
+                isEnglish = (lang == AppLanguage.EN),
+                isReported = isRep,
+                onReportClick = {
+                    openReportDialog(q)
+                }
             )
         }
 
         nextButton.text = nextButtonLabel(currentIndex, lang)
         revalidate()
         repaint()
+    }
+
+    private fun openReportDialog(question: Question) {
+        val dialog = QuestionReportDialog(
+            project = project,
+            question = question,
+            lang = currentLanguage(),
+            onSuccess = { qId ->
+                reportButton.refreshReportedState(true)
+                explanationCard.refreshReportedState(true)
+            }
+        )
+        dialog.show()
     }
 
     private fun advance() {

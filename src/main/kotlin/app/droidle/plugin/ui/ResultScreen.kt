@@ -8,6 +8,7 @@ import app.droidle.plugin.state.StateManager
 import app.droidle.plugin.ui.components.AutoWrappingHtmlLabel
 import app.droidle.plugin.ui.components.BugdroidIcon
 import app.droidle.plugin.ui.components.ModernCodeSnippet
+import app.droidle.plugin.ui.components.QuestionReportButton
 import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.project.Project
 import com.intellij.ui.JBColor
@@ -42,6 +43,7 @@ open class ResultScreen(
 ) : JPanel(BorderLayout(0, 0)) {
 
     var overrideLanguage: AppLanguage? = null
+    var isQuestionReportedProvider: ((String) -> Boolean)? = null
 
     private val bugdroidIcons = mutableListOf<BugdroidIcon>()
     private val reviewCardContainer = JPanel(BorderLayout()).apply { isOpaque = false }
@@ -337,8 +339,20 @@ open class ResultScreen(
                 foreground = if (isCorrect) JBColor(Color(0x059669), Color(0x34D399))
                 else JBColor(Color(0xF43F5E), Color(0xFB7185))
             }
+            val headerEast = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(8), 0)).apply {
+                isOpaque = false
+                add(statusBadge)
+                val reportBtn = QuestionReportButton(
+                    currentQuestion = question,
+                    currentLang = lang,
+                    project = project,
+                    compact = false,
+                    isReportedChecker = isQuestionReportedProvider
+                )
+                add(reportBtn)
+            }
             add(title, BorderLayout.WEST)
-            add(statusBadge, BorderLayout.EAST)
+            add(headerEast, BorderLayout.EAST)
         }
         card.add(header)
         card.add(vGap(8))
@@ -440,21 +454,33 @@ open class ResultScreen(
                 }
                 add(explLabel)
 
-                if (question.doc_links.isNotEmpty()) {
-                    add(vGap(6))
-                    val docBtnText = if (lang == AppLanguage.EN) "Official Documentation ↗" else "Resmi Dokümana Git ↗"
-                    val docBtn = JButton(docBtnText).apply {
-                        font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
-                        isBorderPainted = false
-                        isContentAreaFilled = false
-                        isFocusPainted = false
-                        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-                        alignmentX = Component.LEFT_ALIGNMENT
-                        foreground = JBColor(Color(0x2563EB), Color(0x60A5FA))
-                        addActionListener { BrowserUtil.browse(question.doc_links.first().url) }
+                val actionsRow = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(8), 0)).apply {
+                    isOpaque = false
+                    alignmentX = Component.LEFT_ALIGNMENT
+                    if (question.doc_links.isNotEmpty()) {
+                        val docBtnText = if (lang == AppLanguage.EN) "Official Documentation ↗" else "Resmi Dokümana Git ↗"
+                        val docBtn = JButton(docBtnText).apply {
+                            font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+                            isBorderPainted = false
+                            isContentAreaFilled = false
+                            isFocusPainted = false
+                            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                            foreground = JBColor(Color(0x2563EB), Color(0x60A5FA))
+                            addActionListener { BrowserUtil.browse(question.doc_links.first().url) }
+                        }
+                        add(docBtn)
                     }
-                    add(docBtn)
+                    val explReportBtn = QuestionReportButton(
+                        currentQuestion = question,
+                        currentLang = lang,
+                        project = project,
+                        compact = false,
+                        isReportedChecker = isQuestionReportedProvider
+                    )
+                    add(explReportBtn)
                 }
+                add(vGap(6))
+                add(actionsRow)
             }
             card.add(explBox)
         }

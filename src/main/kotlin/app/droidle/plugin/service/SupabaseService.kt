@@ -291,7 +291,99 @@ class SupabaseService {
         }
     }
 
+    /**
+     * Inserts a question issue report into Supabase `question_reports` table.
+     * Mirrors web app /api/questions/report contract.
+     */
+    fun reportQuestion(
+        questionId: String,
+        reason: String,
+        details: String? = null,
+        userId: String? = null
+    ): Boolean {
+        if (questionId.isBlank() || reason.isBlank()) return false
+        val token = StateManager.getInstance().getAuthToken()
+        val url = "$supabaseUrl/rest/v1/question_reports"
+
+        // Ensure userId is a valid UUID to prevent Postgres type error, or null
+        val effectiveUserId = userId?.trim()?.takeIf { UUID_REGEX.matches(it) }
+        val cleanDetails = details?.trim()?.takeIf { it.isNotBlank() }?.take(2000)
+
+        val payload = QuestionReportPayload(
+            id = java.util.UUID.randomUUID().toString(),
+            question_id = questionId.trim(),
+            user_id = effectiveUserId,
+            reason = reason,
+            details = cleanDetails,
+            status = "pending"
+        )
+
+        val jsonPayload = json.encodeToString(QuestionReportPayload.serializer(), payload)
+        val body = jsonPayload.toRequestBody("application/json".toMediaType())
+
+        val request = Request.Builder()
+            .url(url)
+            .applySupabaseHeaders(token)
+            .header("Content-Type", "application/json")
+            .header("Prefer", "return=minimal")
+            .post(body)
+            .build()
+
+        return try {
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    true
+                } else {
+                    val respBody = response.body?.string() ?: ""
+                    LOG.warn("reportQuestion failed HTTP ${response.code}: $respBody")
+                    reportQuestionViaWebEndpoint(questionId, reason, cleanDetails, effectiveUserId)
+                }
+            }
+        } catch (e: Exception) {
+            LOG.warn("reportQuestion network error: ${e.message}")
+            reportQuestionViaWebEndpoint(questionId, reason, cleanDetails, effectiveUserId)
+        }
+    }
+
+    private fun reportQuestionViaWebEndpoint(
+        questionId: String,
+        reason: String,
+        details: String?,
+        userId: String?
+    ): Boolean {
+        return try {
+            val apiBase = StateManager.getInstance().settings.apiBaseUrl.trimEnd('/')
+            val url = "$apiBase/api/questions/report"
+            val token = StateManager.getInstance().getAuthToken()
+
+            val webPayload = WebReportRequestPayload(
+                questionId = questionId,
+                reason = reason,
+                details = details,
+                userId = userId
+            )
+            val jsonPayload = json.encodeToString(WebReportRequestPayload.serializer(), webPayload)
+            val body = jsonPayload.toRequestBody("application/json".toMediaType())
+
+            val reqBuilder = Request.Builder()
+                .url(url)
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json")
+                .post(body)
+            if (token != null) reqBuilder.header("Authorization", "Bearer $token")
+            val bypass = DroidleSettingsState.getInstance().vercelBypassSecret
+            if (bypass.isNotBlank()) reqBuilder.header("x-vercel-protection-bypass", bypass)
+
+            client.newCall(reqBuilder.build()).execute().use { it.isSuccessful }
+        } catch (e: Exception) {
+            LOG.warn("reportQuestionViaWebEndpoint fallback error: ${e.message}")
+            false
+        }
+    }
+
     companion object {
+        private val UUID_REGEX = Regex("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
+
         fun getInstance(): SupabaseService = service()
     }
 }

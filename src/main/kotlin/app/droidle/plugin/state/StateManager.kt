@@ -348,6 +348,30 @@ class StateManager {
         get() = AppLanguage.fromCode(props.getValue(KEY_LANGUAGE))
         set(value) { props.setValue(KEY_LANGUAGE, value.code) }
 
+    // ── Question Reports ──────────────────────────────────────────────────────
+
+    fun getReportedQuestionIds(): Set<String> {
+        val raw = props.getValue(KEY_REPORTED_QUESTIONS) ?: return emptySet()
+        return raw.split(",").map { it.trim() }.filter { it.isNotBlank() }.toSet()
+    }
+
+    fun isQuestionReported(questionId: String): Boolean {
+        if (questionId.isBlank()) return false
+        return getReportedQuestionIds().contains(questionId.trim())
+    }
+
+    fun markQuestionAsReported(questionId: String) {
+        if (questionId.isBlank()) return
+        val current = getReportedQuestionIds().toMutableSet()
+        if (current.add(questionId.trim())) {
+            props.setValue(KEY_REPORTED_QUESTIONS, current.joinToString(","))
+        }
+    }
+
+    fun clearReportedQuestions() {
+        props.unsetValue(KEY_REPORTED_QUESTIONS)
+    }
+
     // ── Keys ──────────────────────────────────────────────────────────────────
 
     companion object {
@@ -372,6 +396,7 @@ class StateManager {
         private const val KEY_TODAY_XP       = "droidle.todayXp"
         private const val KEY_TODAY_OPTIONS  = "droidle.todayOptions"
         private const val KEY_TODAY_ANSWERS  = "droidle.todayAnswers"
+        private const val KEY_REPORTED_QUESTIONS = "droidle.reportedQuestions"
 
         fun getInstance(): StateManager = service()
     }
