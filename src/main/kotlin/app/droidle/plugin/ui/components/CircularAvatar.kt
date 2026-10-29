@@ -1,0 +1,154 @@
+package app.droidle.plugin.ui.components
+
+import com.intellij.ide.BrowserUtil
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.ui.JBColor
+import com.intellij.util.ui.JBUI
+import java.awt.*
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
+import java.awt.geom.Ellipse2D
+import java.awt.image.BufferedImage
+import java.net.URL
+import java.util.concurrent.ConcurrentHashMap
+import javax.imageio.ImageIO
+import javax.swing.JComponent
+import javax.swing.JMenuItem
+import javax.swing.JPopupMenu
+import javax.swing.SwingUtilities
+
+object AvatarImageCache {
+    private val memoryCache = ConcurrentHashMap<String, Image>()
+
+    fun getOrLoad(url: String, onLoaded: (Image) -> Unit): Image? {
+        val cached = memoryCache[url]
+        if (cached != null) return cached
+
+        ApplicationManager.getApplication().executeOnPooledThread {
+            try {
+                val img = ImageIO.read(URL(url))
+                if (img != null) {
+                    memoryCache[url] = img
+                    SwingUtilities.invokeLater { onLoaded(img) }
+                }
+            } catch (_: Exception) {
+                // Ignore avatar image network failure
+            }
+        }
+        return null
+    }
+}
+
+/**
+ * Modern circular user avatar with fallback initial badge and profile/logout popup.
+ */
+class CircularAvatar(
+    var avatarUrl: String?,
+    var username: String?,
+    private val onLogout: () -> Unit
+) : JComponent() {
+
+    private val sizePx = JBUI.scale(26)
+    private var isHovered = false
+
+    init {
+        preferredSize = Dimension(sizePx, sizePx)
+        minimumSize   = preferredSize
+        maximumSize   = preferredSize
+        cursor        = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        isOpaque      = false
+
+        if (!avatarUrl.isNullOrBlank()) {
+            AvatarImageCache.getOrLoad(avatarUrl!!) { repaint() }
+        }
+
+        addMouseListener(object : MouseAdapter() {
+            override fun mouseEntered(e: MouseEvent?) {
+                isHovered = true
+                repaint()
+            }
+            override fun mouseExited(e: MouseEvent?) {
+                isHovered = false
+                repaint()
+            }
+            override fun mouseClicked(e: MouseEvent?) {
+                showMenu(e?.component ?: this@CircularAvatar, e?.x ?: 0, e?.y ?: sizePx)
+            }
+        })
+    }
+
+    fun updateProfile(newAvatarUrl: String?, newUsername: String?) {
+        avatarUrl = newAvatarUrl
+        username = newUsername
+        if (!avatarUrl.isNullOrBlank()) {
+            AvatarImageCache.getOrLoad(avatarUrl!!) { repaint() }
+        }
+        repaint()
+    }
+
+    private fun showMenu(invoker: Component, x: Int, y: Int) {
+        val menu = JPopupMenu()
+
+        val userItem = JMenuItem(username?.let { "@$it" } ?: "Profilim").apply {
+            isEnabled = false
+            font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+        }
+        menu.add(userItem)
+        menu.addSeparator()
+
+        val leaderboardItem = JMenuItem("Liderlik Tablosu").apply {
+            font = JBUI.Fonts.smallFont()
+            addActionListener { BrowserUtil.browse("https://droidle.vercel.app/leaderboard") }
+        }
+        menu.add(leaderboardItem)
+
+        val logoutItem = JMenuItem("Çıkış Yap").apply {
+            font = JBUI.Fonts.smallFont()
+            addActionListener { onLogout() }
+        }
+        menu.add(logoutItem)
+
+        menu.show(invoker, x, y)
+    }
+
+    override fun paintComponent(g: Graphics) {
+        val g2 = g.create() as Graphics2D
+        try {
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
+
+            val img = avatarUrl?.let { AvatarImageCache.getOrLoad(it) { repaint() } }
+
+            val circle = Ellipse2D.Float(1f, 1f, (width - 2).toFloat(), (height - 2).toFloat())
+
+            if (img != null) {
+                val clip = g2.clip
+                g2.clip(circle)
+                g2.drawImage(img, 0, 0, width, height, null)
+                g2.clip = clip
+
+                // Subtle border
+                g2.color = if (isHovered) Color(0x10, 0xB9, 0x81) else JBColor(Color(0xE4E4E7), Color(0x3F3F46))
+                g2.stroke = BasicStroke(JBUI.scale(1).toFloat())
+                g2.draw(circle)
+            } else {
+                // Fallback initial
+                g2.color = JBColor(Color(0xECFDF5), Color(0x134E32))
+                g2.fill(circle)
+
+                g2.color = if (isHovered) Color(0x10, 0xB9, 0x81) else JBColor(Color(0x059669), Color(0x34D399))
+                g2.stroke = BasicStroke(JBUI.scale(1).toFloat())
+                g2.draw(circle)
+
+                val initial = username?.firstOrNull()?.uppercaseChar()?.toString() ?: "D"
+                g2.font = JBUI.Fonts.label(11f).deriveFont(Font.BOLD)
+                val fm = g2.fontMetrics
+                val tx = (width - fm.stringWidth(initial)) / 2
+                val ty = (height + fm.ascent - fm.descent) / 2
+                g2.drawString(initial, tx, ty)
+            }
+        } finally {
+            g2.dispose()
+        }
+    }
+}

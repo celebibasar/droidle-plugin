@@ -1,8 +1,15 @@
 package app.droidle.plugin.ui
 
+import app.droidle.plugin.model.DocLink
 import app.droidle.plugin.model.Question
+import app.droidle.plugin.model.UserAnswerPayload
 import app.droidle.plugin.state.AppLanguage
 import app.droidle.plugin.state.StateManager
+import app.droidle.plugin.ui.components.AutoWrappingHtmlLabel
+import app.droidle.plugin.ui.components.BugdroidIcon
+import app.droidle.plugin.ui.components.ModernCodeSnippet
+import com.intellij.ide.BrowserUtil
+import com.intellij.openapi.project.Project
 import com.intellij.ui.JBColor
 import com.intellij.ui.RoundedLineBorder
 import com.intellij.ui.components.JBLabel
@@ -15,418 +22,519 @@ import javax.swing.*
 import javax.swing.border.CompoundBorder
 
 /**
- * Result screen — shown after quiz completion.
+ * Modern Result Screen adhering to Linear / JetBrains New UI aesthetics.
  *
- * Displays:
- *  - Score ring (correct/total)
- *  - Score caption (language-aware)
- *  - XP earned badge (mirrors web difficulty-based XP)
- *  - Streak badge with flame
- *  - Longest streak label
- *  - Category breakdown (per-question grouping)
- *  - Difficulty breakdown (Junior/Mid/Senior/Expert)
- *  - CTA button → web leaderboard
+ * Features:
+ * - 5 interactive vector Android Bugdroid icons (emerald green if correct, rose red if wrong).
+ * - Clicking any Bugdroid immediately reveals the Question Review Card for that question.
+ * - Score summary, XP earned badge, streak badge.
+ * - Category and difficulty breakdown cards.
+ * - CTA button to view web leaderboard.
  */
 class ResultScreen(
     private val correctCount: Int,
     private val questions: List<Question>,
     private val earnedXp: Int = 0,
+    private val selectedOptions: List<Int> = emptyList(),
+    private val answers: Map<String, UserAnswerPayload> = emptyMap(),
+    private val project: Project? = null,
     private val onOpenWeb: () -> Unit
 ) : JPanel(BorderLayout(0, 0)) {
 
+    private val bugdroidIcons = mutableListOf<BugdroidIcon>()
+    private val reviewCardContainer = JPanel(BorderLayout()).apply { isOpaque = false }
+    private var selectedQuestionIndex: Int = 0
+
     init {
-        border   = JBUI.Borders.empty()
+        border = JBUI.Borders.empty()
         isOpaque = false
         buildUI()
     }
 
     private fun buildUI() {
-        val total  = questions.size.coerceAtLeast(1)
-        val pct    = (correctCount * 100) / total
-        val state  = StateManager.getInstance()
-        val lang   = state.language
-        val streak = state.currentStreak
-        val longest = state.longestStreak
+        val total = questions.size.coerceAtLeast(1)
+        val state = try { StateManager.getInstance() } catch (_: Throwable) { null }
+        val lang = state?.language ?: AppLanguage.TR
+        val streak = state?.currentStreak ?: 0
+        val longest = state?.longestStreak ?: 0
 
-        // ── Score ring ──────────────────────────────────────────────────────
-        val ring = ScoreRing(correctCount, total)
-
-        // ── Score caption ───────────────────────────────────────────────────
-        val scoreCaption = when (lang) {
-            AppLanguage.EN -> when {
-                pct == 100 -> "Perfect! 🎉"
-                pct >= 80  -> "Great job!"
-                pct >= 60  -> "Good work."
-                pct >= 40  -> "Keep practicing."
-                else       -> "Keep going, better tomorrow!"
-            }
-            AppLanguage.TR -> when {
-                pct == 100 -> "Mükemmel! 🎉"
-                pct >= 80  -> "Harika gidiş!"
-                pct >= 60  -> "İyi iş çıkardın."
-                pct >= 40  -> "Daha çok pratik yapabilirsin."
-                else       -> "Devam et, yarın daha iyi!"
-            }
-        }
-        val captionLabel = JBLabel(scoreCaption).apply {
-            font = JBUI.Fonts.label(14f).deriveFont(Font.BOLD)
-            horizontalAlignment = SwingConstants.CENTER
-        }
-
-        // ── XP earned badge ─────────────────────────────────────────────────
-        val xpBadge = XpEarnedBadge(earnedXp, lang)
-
-        // ── Streak badge ────────────────────────────────────────────────────
-        val streakBadge = StreakBadge(streak, lang)
-
-        val longestText = when (lang) {
-            AppLanguage.EN -> "Longest streak: $longest days"
-            AppLanguage.TR -> "En uzun seri: $longest gün"
-        }
-        val longestLabel = JBLabel(longestText).apply {
-            font       = JBUI.Fonts.smallFont()
-            foreground = JBUI.CurrentTheme.Label.disabledForeground()
-            horizontalAlignment = SwingConstants.CENTER
-        }
-
-        // ── Breakdown panels ────────────────────────────────────────────────
-        val categoryPanel   = buildCategoryBreakdown(lang)
-        val difficultyPanel = buildDifficultyBreakdown(lang)
-
-        // ── CTA button ──────────────────────────────────────────────────────
-        val webBtnText = when (lang) {
-            AppLanguage.EN -> "View Web Leaderboard  →"
-            AppLanguage.TR -> "Web'de Sıralamayı Gör  →"
-        }
-        val webBtn = ResultButton(webBtnText) { onOpenWeb() }
-
-        // ── Assembly ────────────────────────────────────────────────────────
         val content = JPanel().apply {
-            layout   = BoxLayout(this, BoxLayout.Y_AXIS)
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
             isOpaque = false
-            border   = JBUI.Borders.empty(JBUI.scale(20), JBUI.scale(16))
+            border = JBUI.Borders.empty(JBUI.scale(16), JBUI.scale(14), JBUI.scale(24), JBUI.scale(14))
 
-            fun centered(c: JComponent) { c.alignmentX = Component.CENTER_ALIGNMENT; add(c) }
-            fun gap(px: Int = 10)       { add(Box.createVerticalStrut(JBUI.scale(px))) }
+            fun centered(c: JComponent) {
+                c.alignmentX = Component.CENTER_ALIGNMENT
+                add(c)
+            }
+            fun gap(px: Int = 10) {
+                add(Box.createVerticalStrut(JBUI.scale(px)))
+            }
 
-            centered(ring)
-            gap(14)
-            centered(captionLabel)
-            gap(8)
-            centered(xpBadge)
-            gap(10)
-            centered(streakBadge)
+            // ── Score Headline ──────────────────────────────────────────────
+            val pct = (correctCount * 100) / total
+            val scoreLabel = JBLabel("$correctCount / $total").apply {
+                font = JBUI.Fonts.label(28f).deriveFont(Font.BOLD)
+                foreground = when {
+                    pct >= 80 -> JBColor(Color(0x10B981), Color(0x34D399))
+                    pct >= 60 -> JBColor(Color(0xF59E0B), Color(0xFBBF24))
+                    else      -> JBColor(Color(0xF43F5E), Color(0xFB7185))
+                }
+            }
+            centered(scoreLabel)
             gap(4)
-            centered(longestLabel)
-            gap(20)
-            add(categoryPanel)
+
+            val caption = when (lang) {
+                AppLanguage.EN -> when {
+                    pct == 100 -> "Perfect! All 5 Correct! 🎉"
+                    pct >= 80  -> "Great job! Keep the streak alive! 🔥"
+                    pct >= 60  -> "Good effort, sharp thinking! 💡"
+                    else       -> "Done for today! Review mistakes below 👇"
+                }
+                AppLanguage.TR -> when {
+                    pct == 100 -> "Kusursuz! 5'te 5 Yaptın! 🎉"
+                    pct >= 80  -> "Harika gidiş! Seriyi koru! 🔥"
+                    pct >= 60  -> "İyi iş çıkardın, zihnini açtın! 💡"
+                    else       -> "Bugün tamamlandı! Aşağıdan hatalarını incele 👇"
+                }
+            }
+            val captionLabel = JBLabel(caption).apply {
+                font = JBUI.Fonts.label(12f)
+                foreground = JBUI.CurrentTheme.Label.foreground()
+            }
+            centered(captionLabel)
             gap(10)
-            add(difficultyPanel)
-            gap(20)
+
+            // ── Badges: XP + Streak ─────────────────────────────────────────
+            val badgesRow = JPanel(FlowLayout(FlowLayout.CENTER, JBUI.scale(8), 0)).apply {
+                isOpaque = false
+                add(XpBadge(earnedXp, lang))
+                add(StreakResultBadge(streak, lang))
+            }
+            centered(badgesRow)
+            gap(16)
+
+            // ── 5 Android Bugdroid Vector Icons Row ─────────────────────────
+            val bugdroidsTitle = JBLabel(
+                if (lang == AppLanguage.EN) "Tap any Android Bugdroid to review question"
+                else "Soruyu incelemek için bir Bugdroid'e tıkla"
+            ).apply {
+                font = JBUI.Fonts.smallFont()
+                foreground = JBUI.CurrentTheme.Label.disabledForeground()
+            }
+            centered(bugdroidsTitle)
+            gap(6)
+
+            val bugdroidsRow = JPanel(FlowLayout(FlowLayout.CENTER, JBUI.scale(8), 0)).apply {
+                isOpaque = false
+                alignmentX = Component.CENTER_ALIGNMENT
+            }
+
+            bugdroidIcons.clear()
+            questions.forEachIndexed { i, q ->
+                val isCorrect = determineQuestionCorrectness(i, q)
+                val icon = BugdroidIcon(
+                    questionIndex = i,
+                    isCorrect = isCorrect,
+                    isSelected = (i == selectedQuestionIndex)
+                ) { clickedIndex ->
+                    selectQuestion(clickedIndex)
+                }
+                bugdroidIcons.add(icon)
+                bugdroidsRow.add(icon)
+            }
+            centered(bugdroidsRow)
+            gap(14)
+
+            // ── Question Review Card Container ──────────────────────────────
+            centered(reviewCardContainer)
+            gap(16)
+
+            // ── Topic & Difficulty Breakdowns ───────────────────────────────
+            centered(buildCategoryBreakdown(lang))
+            gap(10)
+            centered(buildDifficultyBreakdown(lang))
+            gap(18)
+
+            // ── CTA: Web Leaderboard ────────────────────────────────────────
+            val webBtnText = if (lang == AppLanguage.EN) "View Web Leaderboard →" else "Web'de Sıralamayı Gör →"
+            val webBtn = object : JButton(webBtnText) {
+                init {
+                    isBorderPainted = false
+                    isContentAreaFilled = false
+                    isFocusPainted = false
+                    foreground = Color.WHITE
+                    font = JBUI.Fonts.label(12f).deriveFont(Font.BOLD)
+                    cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                    border = JBUI.Borders.empty(JBUI.scale(8), JBUI.scale(20))
+                    preferredSize = Dimension(JBUI.scale(220), JBUI.scale(36))
+                    maximumSize = preferredSize
+                    addActionListener { onOpenWeb() }
+                }
+                override fun paintComponent(g: Graphics) {
+                    val g2 = g as Graphics2D
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                    val bg = if (model.isPressed) Color(0x05, 0x96, 0x69)
+                    else if (model.isRollover) Color(0x0D, 0xA2, 0x70)
+                    else Color(0x10, 0xB9, 0x81)
+                    g2.color = bg
+                    g2.fillRoundRect(0, 0, width, height, JBUI.scale(8), JBUI.scale(8))
+                    super.paintComponent(g)
+                }
+            }
             centered(webBtn)
         }
 
+        // Initialize review card with first question or first incorrect question
+        if (questions.isNotEmpty()) {
+            val firstWrong = questions.indices.firstOrNull { !determineQuestionCorrectness(it, questions[it]) }
+            selectQuestion(firstWrong ?: 0)
+        }
+
         val scroll = JBScrollPane(content).apply {
-            border                    = JBUI.Borders.empty()
-            verticalScrollBarPolicy   = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
+            border = JBUI.Borders.empty()
+            verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
             horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
         }
         add(scroll, BorderLayout.CENTER)
     }
 
-    // ── Category breakdown ─────────────────────────────────────────────────────
+    private fun selectQuestion(index: Int) {
+        if (index !in questions.indices) return
+        selectedQuestionIndex = index
 
-    private fun buildCategoryBreakdown(lang: AppLanguage): JPanel {
-        val byCategory = questions.groupBy { it.category }
-
-        val title = if (lang == AppLanguage.EN) "📊  By Topic" else "📊  Konu Dağılımı"
-
-        return buildBreakdownCard(title, JBColor(Color(0xA7F3D0), Color(0x134E32))) { outer ->
-            byCategory.entries.forEachIndexed { i, (cat, qs) ->
-                val correct = qs.count { it.correct_answer != null } // server validates, fallback
-                val gbc = GridBagConstraints().apply {
-                    gridy  = i + 1
-                    anchor = GridBagConstraints.WEST
-                    insets = Insets(JBUI.scale(3), 0, JBUI.scale(3), 0)
-                }
-                gbc.gridx   = 0; gbc.weightx = 1.0; gbc.fill = GridBagConstraints.HORIZONTAL
-                outer.add(JBLabel(cat).apply { font = JBUI.Fonts.smallFont() }, gbc)
-
-                gbc.gridx  = 1; gbc.weightx = 0.0; gbc.fill = GridBagConstraints.NONE
-                gbc.insets = Insets(JBUI.scale(3), JBUI.scale(8), JBUI.scale(3), 0)
-                val pillText = if (lang == AppLanguage.EN)
-                    "${qs.size} q" else "${qs.size} soru"
-                outer.add(CountPill(pillText), gbc)
-            }
+        bugdroidIcons.forEachIndexed { i, icon ->
+            icon.isSelected = (i == index)
+            icon.repaint()
         }
+
+        val q = questions[index]
+        val isCorrect = determineQuestionCorrectness(index, q)
+        val userChosenOption = determineUserChosenOption(index, q)
+
+        reviewCardContainer.removeAll()
+        reviewCardContainer.add(buildQuestionReviewCard(index, q, isCorrect, userChosenOption), BorderLayout.CENTER)
+        reviewCardContainer.revalidate()
+        reviewCardContainer.repaint()
     }
 
-    // ── Difficulty breakdown ───────────────────────────────────────────────────
+    private fun determineQuestionCorrectness(index: Int, q: Question): Boolean {
+        val optionKeys = listOf("A", "B", "C", "D")
+        val correctKey = q.resolvedCorrectAnswer ?: "A"
+        val correctIndex = optionKeys.indexOf(correctKey.uppercase())
 
-    private fun buildDifficultyBreakdown(lang: AppLanguage): JPanel {
-        val order  = listOf("Junior", "Mid", "Senior", "Expert")
-        val byDiff = questions.groupBy { it.difficulty }
-            .entries
-            .sortedBy { order.indexOf(it.key).takeIf { i -> i >= 0 } ?: 99 }
-
-        val title = if (lang == AppLanguage.EN) "⚡  By Difficulty" else "⚡  Zorluk Dağılımı"
-
-        return buildBreakdownCard(title, JBColor(Color(0xFDE68A), Color(0x78350F))) { outer ->
-            byDiff.forEachIndexed { i, (diff, qs) ->
-                val xpPer = qs.firstOrNull()?.xpValue ?: 10
-                val gbc = GridBagConstraints().apply {
-                    gridy  = i + 1
-                    anchor = GridBagConstraints.WEST
-                    insets = Insets(JBUI.scale(3), 0, JBUI.scale(3), 0)
-                }
-
-                gbc.gridx   = 0; gbc.weightx = 1.0; gbc.fill = GridBagConstraints.HORIZONTAL
-                outer.add(DifficultyLabel(diff), gbc)
-
-                gbc.gridx  = 1; gbc.weightx = 0.0; gbc.fill = GridBagConstraints.NONE
-                gbc.insets = Insets(JBUI.scale(3), JBUI.scale(8), JBUI.scale(3), 0)
-                val xpText = "${qs.size}× ${xpPer}XP"
-                outer.add(CountPill(xpText, amber = true), gbc)
-            }
+        // 1. From answers map if present
+        val ans = answers[q.id] ?: answers[index.toString()]
+        if (ans?.isCorrect != null) return ans.isCorrect!!
+        if (!ans?.selectedOption.isNullOrBlank()) {
+            return ans!!.selectedOption.equals(correctKey, ignoreCase = true)
         }
+
+        // 2. From selected_options index vs correct option index
+        val userOptionIdx = selectedOptions.getOrNull(index)
+        if (userOptionIdx != null && userOptionIdx >= 0) {
+            return userOptionIdx == correctIndex
+        }
+
+        return false
     }
 
-    // ── Shared card builder ────────────────────────────────────────────────────
+    private fun determineUserChosenOption(index: Int, q: Question): String? {
+        val ans = answers[q.id] ?: answers[index.toString()]
+        if (!ans?.selectedOption.isNullOrBlank()) return ans!!.selectedOption
 
-    private fun buildBreakdownCard(
-        title: String,
-        borderColor: Color,
-        fillRows: (GridBagPanel) -> Unit
+        val optionKeys = listOf("A", "B", "C", "D")
+        val userOptionIdx = selectedOptions.getOrNull(index)
+        if (userOptionIdx != null && userOptionIdx in 0..3) {
+            return optionKeys[userOptionIdx]
+        }
+        return null
+    }
+
+    private fun buildQuestionReviewCard(
+        index: Int,
+        question: Question,
+        isCorrect: Boolean,
+        userOption: String?
     ): JPanel {
-        val outer = GridBagPanel().apply {
+        val lang = StateManager.getInstance().language
+        fun vGap(h: Int): Component = Box.createRigidArea(Dimension(0, JBUI.scale(h))).apply {
+            if (this is JComponent) alignmentX = Component.LEFT_ALIGNMENT
+        }
+
+        val card = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
             border = CompoundBorder(
-                RoundedLineBorder(borderColor, JBUI.scale(10)),
+                RoundedLineBorder(JBColor(Color(0xE4E4E7), Color(0x323438)), JBUI.scale(12)),
                 JBUI.Borders.empty(JBUI.scale(12), JBUI.scale(14))
             )
+            alignmentX = Component.CENTER_ALIGNMENT
+            maximumSize = Dimension(JBUI.scale(460), Int.MAX_VALUE)
         }
 
-        val header = GridBagConstraints().apply {
-            gridx     = 0; gridy = 0
-            gridwidth = 2
-            weightx   = 1.0
-            anchor    = GridBagConstraints.WEST
-            fill      = GridBagConstraints.HORIZONTAL
-            insets    = Insets(0, 0, JBUI.scale(8), 0)
+        // Header
+        val header = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            alignmentX = Component.LEFT_ALIGNMENT
+
+            val title = JBLabel("Soru ${index + 1} / ${questions.size} • ${question.category} • ${question.difficulty}").apply {
+                font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+                foreground = JBUI.CurrentTheme.Label.disabledForeground()
+            }
+            val statusBadge = JBLabel(if (isCorrect) "✓ Doğru" else "✗ Yanlış").apply {
+                font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+                foreground = if (isCorrect) JBColor(Color(0x059669), Color(0x34D399))
+                else JBColor(Color(0xF43F5E), Color(0xFB7185))
+            }
+            add(title, BorderLayout.WEST)
+            add(statusBadge, BorderLayout.EAST)
         }
-        outer.add(JBLabel(title).apply {
-            font       = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
-            foreground = JBUI.CurrentTheme.Label.foreground()
-        }, header)
+        card.add(header)
+        card.add(vGap(8))
 
-        fillRows(outer)
-        return outer
-    }
-}
-
-// ── GridBagPanel (opaque=false, rounded bg) ────────────────────────────────────
-
-private class GridBagPanel : JPanel(GridBagLayout()) {
-    init {
-        isOpaque   = false
-        alignmentX = Component.LEFT_ALIGNMENT
-        maximumSize = Dimension(Int.MAX_VALUE, Int.MAX_VALUE)
-    }
-}
-
-// ── XP earned badge ────────────────────────────────────────────────────────────
-
-private class XpEarnedBadge(private val xp: Int, private val lang: AppLanguage) : JComponent() {
-
-    private val purple = Color(0x7C, 0x3A, 0xED)
-    private val text   = if (lang == AppLanguage.EN) "✨  +$xp XP earned" else "✨  +$xp XP kazanıldı"
-    private val arc    = JBUI.scale(14)
-    private val hPad   = JBUI.scale(12)
-    private val vPad   = JBUI.scale(5)
-
-    init {
-        font = JBUI.Fonts.label(11f)
-        val fm = getFontMetrics(font)
-        val w  = fm.stringWidth(text) + hPad * 2
-        val h  = fm.height + vPad * 2
-        preferredSize = Dimension(w, h)
-        minimumSize   = preferredSize
-    }
-
-    override fun paintComponent(g: Graphics) {
-        val g2 = g as Graphics2D
-        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-        g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
-        g2.color = Color(purple.red, purple.green, purple.blue, 20)
-        g2.fillRoundRect(0, 0, width, height, arc, arc)
-        g2.color = Color(purple.red, purple.green, purple.blue, 150)
-        g2.stroke = BasicStroke(1f)
-        g2.drawRoundRect(0, 0, width - 1, height - 1, arc, arc)
-        g2.color = purple
-        g2.font  = font ?: JBUI.Fonts.label(11f)
-        val fm   = g2.fontMetrics
-        val tx   = (width - fm.stringWidth(text)) / 2
-        val ty   = (height + fm.ascent - fm.descent) / 2
-        g2.drawString(text, tx, ty)
-    }
-}
-
-// ── Score ring ─────────────────────────────────────────────────────────────────
-
-private class ScoreRing(private val correct: Int, private val total: Int) : JComponent() {
-
-    private val diameter = JBUI.scale(96)
-
-    init {
-        preferredSize = Dimension(diameter, diameter)
-        minimumSize   = preferredSize
-        maximumSize   = preferredSize
-    }
-
-    override fun paintComponent(g: Graphics) {
-        val g2  = g as Graphics2D
-        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-        val sw  = JBUI.scale(9).toFloat()
-        val pad = (sw / 2 + 1).toInt()
-        val d   = diameter - pad * 2
-
-        g2.stroke = BasicStroke(sw, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
-        g2.color  = JBColor(Color(0xE4E4E7), Color(0x3F3F46))
-        g2.drawOval(pad, pad, d, d)
-
-        val pct = if (total > 0) correct.toFloat() / total else 0f
-        val arc = (pct * 360).toInt()
-        g2.color = when {
-            pct >= 0.8f -> JBColor(Color(0x10B981), Color(0x10B981))
-            pct >= 0.5f -> JBColor(Color(0xF59E0B), Color(0xFBBF24))
-            else        -> JBColor(Color(0xEF4444), Color(0xEF4444))
+        // Question text
+        val qText = AutoWrappingHtmlLabel(TextFormatter.formatQuestionHtml(question.displayQuestion(lang))).apply {
+            font = JBUI.Fonts.label(12f)
+            horizontalAlignment = SwingConstants.LEFT
+            alignmentX = Component.LEFT_ALIGNMENT
         }
-        g2.drawArc(pad, pad, d, d, 90, -arc)
+        card.add(qText)
 
-        g2.stroke = BasicStroke(1f)
-        val bigFont   = JBUI.Fonts.label(22f).deriveFont(Font.BOLD)
-        val smallFont = JBUI.Fonts.smallFont()
-        val text      = "$correct/$total"
-        val fm        = g2.getFontMetrics(bigFont)
-        g2.font  = bigFont
-        g2.color = foreground
-        val tx   = (diameter - fm.stringWidth(text)) / 2
-        val ty   = (diameter + fm.ascent - fm.descent) / 2 - JBUI.scale(5)
-        g2.drawString(text, tx, ty)
-
-        val sub = "doğru"
-        g2.font  = smallFont
-        g2.color = JBUI.CurrentTheme.Label.disabledForeground()
-        val sfm  = g2.getFontMetrics(smallFont)
-        g2.drawString(sub, (diameter - sfm.stringWidth(sub)) / 2, ty + sfm.height)
-    }
-}
-
-// ── Streak badge ───────────────────────────────────────────────────────────────
-
-private class StreakBadge(private val streak: Int, private val lang: AppLanguage) : JComponent() {
-
-    private val amber = Color(0xF5, 0x9E, 0x0B)
-    private val text  = when {
-        streak > 1 && lang == AppLanguage.EN -> "🔥  $streak day streak"
-        streak > 1                           -> "🔥  $streak günlük seri"
-        lang == AppLanguage.EN               -> "🎉  First day done!"
-        else                                 -> "🎉  İlk gün tamamlandı"
-    }
-    private val arc  = JBUI.scale(14)
-    private val hPad = JBUI.scale(12)
-    private val vPad = JBUI.scale(5)
-
-    init {
-        font = JBUI.Fonts.label(11f)
-        val fm = getFontMetrics(font)
-        val w  = fm.stringWidth(text) + hPad * 2
-        val h  = fm.height + vPad * 2
-        preferredSize = Dimension(w, h)
-        minimumSize   = preferredSize
-    }
-
-    override fun paintComponent(g: Graphics) {
-        val g2 = g as Graphics2D
-        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-        g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
-        g2.color = Color(amber.red, amber.green, amber.blue, 25)
-        g2.fillRoundRect(0, 0, width, height, arc, arc)
-        g2.color = Color(amber.red, amber.green, amber.blue, 180)
-        g2.stroke = BasicStroke(1f)
-        g2.drawRoundRect(0, 0, width - 1, height - 1, arc, arc)
-        g2.color = amber
-        g2.font  = font ?: JBUI.Fonts.label(11f)
-        val fm = g2.fontMetrics
-        val tx = (width - fm.stringWidth(text)) / 2
-        val ty = (height + fm.ascent - fm.descent) / 2
-        g2.drawString(text, tx, ty)
-    }
-}
-
-// ── Difficulty label (colored by level) ───────────────────────────────────────
-
-private class DifficultyLabel(diff: String) : JBLabel(diff) {
-    init {
-        font       = JBUI.Fonts.smallFont()
-        foreground = when (diff) {
-            "Junior" -> JBColor(Color(0x059669), Color(0x34D399))
-            "Mid"    -> JBColor(Color(0x2563EB), Color(0x60A5FA))
-            "Senior" -> JBColor(Color(0xD97706), Color(0xFBBF24))
-            "Expert" -> JBColor(Color(0xDC2626), Color(0xF87171))
-            else     -> JBUI.CurrentTheme.Label.foreground()
+        // Code snippet
+        if (!question.code_snippet.isNullOrBlank()) {
+            card.add(vGap(8))
+            val snippet = ModernCodeSnippet(project, question.code_snippet!!, question.code_language)
+            snippet.alignmentX = Component.LEFT_ALIGNMENT
+            card.add(snippet)
         }
+
+        card.add(vGap(10))
+
+        // Options breakdown
+        val opts = question.displayOptions(lang)
+        val correctKey = question.resolvedCorrectAnswer ?: "A"
+
+        listOf("A", "B", "C", "D").forEach { key ->
+            val text = opts[key] ?: return@forEach
+            val isUserChoice = (userOption == key)
+            val isOptionCorrect = (key == correctKey)
+
+            val row = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
+                isOpaque = false
+                alignmentX = Component.LEFT_ALIGNMENT
+                border = CompoundBorder(
+                    RoundedLineBorder(
+                        when {
+                            isOptionCorrect -> JBColor(Color(0x10B981), Color(0x059669))
+                            isUserChoice && !isCorrect -> JBColor(Color(0xF43F5E), Color(0xBE123C))
+                            else -> JBColor(Color(0xE4E4E7), Color(0x2E3035))
+                        },
+                        JBUI.scale(8)
+                    ),
+                    JBUI.Borders.empty(JBUI.scale(6), JBUI.scale(8))
+                )
+
+                val badge = JBLabel("[$key]").apply {
+                    font = Font(Font.MONOSPACED, Font.BOLD, JBUI.scaleFontSize(11f).toInt())
+                    foreground = when {
+                        isOptionCorrect -> JBColor(Color(0x059669), Color(0x34D399))
+                        isUserChoice && !isCorrect -> JBColor(Color(0xF43F5E), Color(0xFB7185))
+                        else -> JBUI.CurrentTheme.Label.disabledForeground()
+                    }
+                }
+                val label = AutoWrappingHtmlLabel(TextFormatter.formatOptionHtml(text)).apply {
+                    font = JBUI.Fonts.smallFont()
+                    horizontalAlignment = SwingConstants.LEFT
+                    alignmentX = Component.LEFT_ALIGNMENT
+                    foreground = when {
+                        isOptionCorrect -> JBColor(Color(0x065F46), Color(0x6EE7B7))
+                        isUserChoice && !isCorrect -> JBColor(Color(0x9F1239), Color(0xFDA4AF))
+                        else -> JBUI.CurrentTheme.Label.foreground()
+                    }
+                }
+                add(badge, BorderLayout.WEST)
+                add(label, BorderLayout.CENTER)
+            }
+            card.add(row)
+            card.add(vGap(4))
+        }
+
+        // Explanation text
+        val explanation = question.displayExplanation(lang)
+        if (!explanation.isNullOrBlank()) {
+            card.add(vGap(8))
+            val explBox = JPanel().apply {
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                isOpaque = false
+                alignmentX = Component.LEFT_ALIGNMENT
+                border = CompoundBorder(
+                    RoundedLineBorder(JBColor(Color(0x10B981), Color(0x059669)), JBUI.scale(8)),
+                    JBUI.Borders.empty(JBUI.scale(8), JBUI.scale(10))
+                )
+
+                val explLabel = AutoWrappingHtmlLabel(TextFormatter.formatExplanationHtml("<b>Açıklama:</b> $explanation")).apply {
+                    font = JBUI.Fonts.smallFont()
+                    horizontalAlignment = SwingConstants.LEFT
+                    alignmentX = Component.LEFT_ALIGNMENT
+                    foreground = JBUI.CurrentTheme.Label.foreground()
+                }
+                add(explLabel)
+
+                if (question.doc_links.isNotEmpty()) {
+                    add(vGap(6))
+                    val docBtn = JButton("Resmi Dokümana Git ↗").apply {
+                        font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+                        isBorderPainted = false
+                        isContentAreaFilled = false
+                        isFocusPainted = false
+                        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                        alignmentX = Component.LEFT_ALIGNMENT
+                        foreground = JBColor(Color(0x2563EB), Color(0x60A5FA))
+                        addActionListener { BrowserUtil.browse(question.doc_links.first().url) }
+                    }
+                    add(docBtn)
+                }
+            }
+            card.add(explBox)
+        }
+
+        return card
     }
-}
 
-// ── Count pill ─────────────────────────────────────────────────────────────────
-
-private class CountPill(text: String, amber: Boolean = false) : JBLabel(text) {
-    init {
-        font = JBUI.Fonts.smallFont()
-        if (amber) {
-            foreground = JBColor(Color(0x92400E), Color(0xFCD34D))
-            border     = CompoundBorder(
-                RoundedLineBorder(JBColor(Color(0xFDE68A), Color(0x78350F)), JBUI.scale(10)),
-                JBUI.Borders.empty(JBUI.scale(1), JBUI.scale(6))
+    private fun buildCategoryBreakdown(lang: AppLanguage): JPanel {
+        val byCat = questions.groupBy { it.category }
+        val title = if (lang == AppLanguage.EN) "📊 Topic Breakdown" else "📊 Konu Dağılımı"
+        val panel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            border = CompoundBorder(
+                RoundedLineBorder(JBColor(Color(0xE4E4E7), Color(0x323438)), JBUI.scale(10)),
+                JBUI.Borders.empty(JBUI.scale(10), JBUI.scale(12))
             )
-        } else {
-            foreground = JBColor(Color(0x047857), Color(0x6EE7B7))
-            border     = CompoundBorder(
-                RoundedLineBorder(JBColor(Color(0x6EE7B7), Color(0x064E3B)), JBUI.scale(10)),
-                JBUI.Borders.empty(JBUI.scale(1), JBUI.scale(6))
-            )
+            alignmentX = Component.CENTER_ALIGNMENT
+            maximumSize = Dimension(JBUI.scale(460), Int.MAX_VALUE)
         }
-        isOpaque = false
-    }
-}
-
-// ── Result CTA button ──────────────────────────────────────────────────────────
-
-private class ResultButton(text: String, onClick: () -> Unit) : JButton(text) {
-    private val green   = Color(0x10, 0xB9, 0x81)
-    private var hovered = false
-    private val arc     = JBUI.scale(7)
-
-    init {
-        isBorderPainted     = false
-        isContentAreaFilled = false
-        isFocusPainted      = false
-        foreground          = Color.WHITE
-        font                = JBUI.Fonts.label(12f).deriveFont(Font.BOLD)
-        cursor              = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-        border              = JBUI.Borders.empty(JBUI.scale(7), JBUI.scale(18))
-        addActionListener { onClick() }
-        addMouseListener(object : MouseAdapter() {
-            override fun mouseEntered(e: MouseEvent) { hovered = true;  repaint() }
-            override fun mouseExited(e: MouseEvent)  { hovered = false; repaint() }
+        panel.add(JBLabel(title).apply {
+            font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+            alignmentX = Component.LEFT_ALIGNMENT
         })
+        panel.add(Box.createVerticalStrut(JBUI.scale(6)))
+
+        byCat.forEach { (cat, qs) ->
+            val row = JPanel(BorderLayout()).apply {
+                isOpaque = false
+                alignmentX = Component.LEFT_ALIGNMENT
+                add(JBLabel(cat).apply { font = JBUI.Fonts.smallFont() }, BorderLayout.WEST)
+                add(JBLabel("${qs.size} soru").apply {
+                    font = JBUI.Fonts.smallFont()
+                    foreground = JBUI.CurrentTheme.Label.disabledForeground()
+                }, BorderLayout.EAST)
+            }
+            panel.add(row)
+            panel.add(Box.createVerticalStrut(JBUI.scale(3)))
+        }
+        return panel
     }
 
-    override fun paintComponent(g: Graphics) {
-        val g2 = g as Graphics2D
-        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-        g2.color = if (hovered) Color(0x0D, 0xA2, 0x70) else green
-        g2.fillRoundRect(0, 0, width, height, arc, arc)
-        super.paintComponent(g)
+    private fun buildDifficultyBreakdown(lang: AppLanguage): JPanel {
+        val byDiff = questions.groupBy { it.difficulty }
+        val title = if (lang == AppLanguage.EN) "⚡ Difficulty Breakdown" else "⚡ Zorluk Dağılımı"
+        val panel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            border = CompoundBorder(
+                RoundedLineBorder(JBColor(Color(0xE4E4E7), Color(0x323438)), JBUI.scale(10)),
+                JBUI.Borders.empty(JBUI.scale(10), JBUI.scale(12))
+            )
+            alignmentX = Component.CENTER_ALIGNMENT
+            maximumSize = Dimension(JBUI.scale(460), Int.MAX_VALUE)
+        }
+        panel.add(JBLabel(title).apply {
+            font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+            alignmentX = Component.LEFT_ALIGNMENT
+        })
+        panel.add(Box.createVerticalStrut(JBUI.scale(6)))
+
+        listOf("Junior", "Mid", "Senior", "Expert").forEach { diff ->
+            val count = byDiff[diff]?.size ?: return@forEach
+            val row = JPanel(BorderLayout()).apply {
+                isOpaque = false
+                alignmentX = Component.LEFT_ALIGNMENT
+                add(JBLabel(diff).apply {
+                    font = JBUI.Fonts.smallFont()
+                    foreground = when (diff) {
+                        "Junior" -> JBColor(Color(0x059669), Color(0x34D399))
+                        "Mid"    -> JBColor(Color(0x2563EB), Color(0x60A5FA))
+                        "Senior" -> JBColor(Color(0xD97706), Color(0xFBBF24))
+                        "Expert" -> JBColor(Color(0xDC2626), Color(0xF87171))
+                        else     -> JBUI.CurrentTheme.Label.foreground()
+                    }
+                }, BorderLayout.WEST)
+                add(JBLabel("$count soru").apply {
+                    font = JBUI.Fonts.smallFont()
+                    foreground = JBUI.CurrentTheme.Label.disabledForeground()
+                }, BorderLayout.EAST)
+            }
+            panel.add(row)
+            panel.add(Box.createVerticalStrut(JBUI.scale(3)))
+        }
+        return panel
+    }
+
+    private class XpBadge(private val xp: Int, private val lang: AppLanguage) : JPanel() {
+        init {
+            isOpaque = false
+            val text = "✨ +$xp XP"
+            val fm = getFontMetrics(JBUI.Fonts.smallFont().deriveFont(Font.BOLD))
+            preferredSize = Dimension(fm.stringWidth(text) + JBUI.scale(16), JBUI.scale(22))
+        }
+
+        override fun paintComponent(g: Graphics) {
+            val g2 = g as Graphics2D
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            val purple = Color(0x8B, 0x5C, 0xF6)
+            g2.color = Color(purple.red, purple.green, purple.blue, 25)
+            g2.fillRoundRect(0, 0, width, height, height, height)
+            g2.color = Color(purple.red, purple.green, purple.blue, 140)
+            g2.stroke = BasicStroke(1f)
+            g2.drawRoundRect(0, 0, width - 1, height - 1, height, height)
+
+            g2.color = purple
+            g2.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+            val fm = g2.fontMetrics
+            val text = "✨ +$xp XP"
+            val tx = (width - fm.stringWidth(text)) / 2
+            val ty = (height + fm.ascent - fm.descent) / 2
+            g2.drawString(text, tx, ty)
+        }
+    }
+
+    private class StreakResultBadge(private val streak: Int, private val lang: AppLanguage) : JPanel() {
+        init {
+            isOpaque = false
+            val text = if (lang == AppLanguage.EN) "🔥 $streak Streak" else "🔥 $streak Günlük Seri"
+            val fm = getFontMetrics(JBUI.Fonts.smallFont().deriveFont(Font.BOLD))
+            preferredSize = Dimension(fm.stringWidth(text) + JBUI.scale(16), JBUI.scale(22))
+        }
+
+        override fun paintComponent(g: Graphics) {
+            val g2 = g as Graphics2D
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            val amber = Color(0xF5, 0x9E, 0x0B)
+            g2.color = Color(amber.red, amber.green, amber.blue, 25)
+            g2.fillRoundRect(0, 0, width, height, height, height)
+            g2.color = Color(amber.red, amber.green, amber.blue, 140)
+            g2.stroke = BasicStroke(1f)
+            g2.drawRoundRect(0, 0, width - 1, height - 1, height, height)
+
+            g2.color = amber
+            g2.font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+            val fm = g2.fontMetrics
+            val text = if (lang == AppLanguage.EN) "🔥 $streak Streak" else "🔥 $streak Günlük Seri"
+            val tx = (width - fm.stringWidth(text)) / 2
+            val ty = (height + fm.ascent - fm.descent) / 2
+            g2.drawString(text, tx, ty)
+        }
     }
 }

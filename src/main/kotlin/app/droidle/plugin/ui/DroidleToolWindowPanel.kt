@@ -2,360 +2,385 @@ package app.droidle.plugin.ui
 
 import app.droidle.plugin.auth.DroidleAuthListener
 import app.droidle.plugin.auth.DroidleLocalAuthServer
-import app.droidle.plugin.model.Question
+import app.droidle.plugin.model.*
 import app.droidle.plugin.service.DroidleService
+import app.droidle.plugin.service.SupabaseService
 import app.droidle.plugin.state.AppLanguage
 import app.droidle.plugin.state.CategoryResult
 import app.droidle.plugin.state.StateManager
-import com.intellij.icons.AllIcons
+import app.droidle.plugin.ui.components.CompactHeader
 import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.project.Project
-import com.intellij.ui.JBColor
-import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.CardLayout
-import java.awt.Color
-import java.awt.FlowLayout
-import java.awt.event.MouseAdapter
-import java.awt.event.MouseEvent
-import javax.swing.BorderFactory
-import javax.swing.JButton
 import javax.swing.JPanel
 import javax.swing.SwingUtilities
-import javax.swing.border.CompoundBorder
 
 /** Screen identifiers for CardLayout navigation */
 internal object Screen {
-    const val LOADING  = "LOADING"
-    const val QUIZ     = "QUIZ"
-    const val RESULT   = "RESULT"
-    const val ERROR    = "ERROR"
-    const val DONE     = "DONE"    // already completed today
+    const val LOADING = "LOADING"
+    const val QUIZ    = "QUIZ"
+    const val RESULT  = "RESULT"
+    const val ERROR   = "ERROR"
 }
 
 /**
- * Top-level ToolWindow content.
+ * Top-level ToolWindow content for Droidle.
  *
- * CardLayout state machine:
- *   LOADING → (server says completedToday) → DONE
- *   LOADING → (questions ready)            → QUIZ
- *   QUIZ    → (last question answered)     → RESULT
- *   QUIZ    → (error during answer verify) → ERROR
- *   ERROR   → (retry)                      → LOADING
- *
- * Sync contract (mirrors web supabase-sync.ts):
- *   - If server returns completedToday=true → syncFromServer() + show DONE
- *   - If user finishes quiz locally         → recordQuizCompletion() + show RESULT
- *   - Double-count guard lives in StateManager.recordQuizCompletion()
- *   - All dates are Europe/Istanbul via StateManager.todayIstanbul()
+ * Implements 100% Supabase cross-platform synchronization with the web app:
+ * - Timezone rule: All dates strictly calculated in ZoneId.of("Europe/Istanbul").
+ * - Startup / Login: Queries Supabase `daily_submissions` for (currentUserId, todayIstanbul).
+ *   If user already solved on Web, directly opens ResultScreen with marked options.
+ * - On quiz complete: UPSERTs daily_submissions and updates profiles table in Supabase.
+ * - Modern JetBrains New UI / Linear aesthetic.
  */
 class DroidleToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) {
 
     private val cards = CardLayout()
-    private val deck  = JPanel(cards).apply { border = JBUI.Borders.empty() }
+    private val deck = JPanel(cards).apply { border = JBUI.Borders.empty() }
 
-    private lateinit var quizScreen:    QuizScreen
-    private lateinit var resultScreen:  ResultScreen
+    private lateinit var header: CompactHeader
     private lateinit var loadingScreen: LoadingScreen
-    private lateinit var errorScreen:   ErrorScreen
-    private lateinit var doneScreen:    DoneScreen
+    private lateinit var errorScreen: ErrorScreen
+    private var quizScreen: QuizScreen? = null
+    private var resultScreen: ResultScreen? = null
 
-    // Toolbar refs for dynamic update
-    private lateinit var loginBtn:   JButton
-    private lateinit var langToggle: JButton
-    private lateinit var userLabel:  JBLabel
+    // Cached current daily questions
+    private var cachedQuestions: List<Question> = emptyList()
 
     init {
         border = JBUI.Borders.empty()
+        isOpaque = false
+
         buildScreens()
-        add(buildTopBar(), BorderLayout.NORTH)
-        add(deck,          BorderLayout.CENTER)
-        start()
+
+        header = CompactHeader(
+            onLanguageToggle = ::toggleLanguage,
+            onLoginClick = ::onLoginClick,
+            onLogoutClick = ::onLogoutClick
+        )
+        add(header, BorderLayout.NORTH)
+        add(deck, BorderLayout.CENTER)
 
         // Start local auth server (localhost:62330) for web→plugin token transfer
         DroidleLocalAuthServer.getInstance().start()
 
-        // Refresh toolbar when auth state changes (login / logout from web)
+        // Listen for auth changes (login / logout) to re-sync remote state
         ApplicationManager.getApplication().messageBus
             .connect()
             .subscribe(DroidleAuthListener.TOPIC, DroidleAuthListener {
-                SwingUtilities.invokeLater { refreshTopBar() }
+                SwingUtilities.invokeLater {
+                    header.refresh()
+                    start()
+                }
             })
+
+        start()
     }
-
-    // ── Top bar ───────────────────────────────────────────────────────────────
-
-    private fun buildTopBar(): JPanel {
-        val state = StateManager.getInstance()
-
-        loginBtn = iconTextButton(
-            icon  = AllIcons.Vcs.Vendors.Github,
-            label = loginLabel(state),
-            tip   = loginTip(state)
-        ) { onLoginClick() }
-
-        userLabel = JBLabel(state.getUsername() ?: "").apply {
-            font       = JBUI.Fonts.smallFont()
-            foreground = JBColor(Color(0x10B981), Color(0x34D399))
-            isVisible  = state.isLoggedIn() && state.getUsername() != null
-        }
-
-        langToggle = JButton(state.language.label).apply {
-            toolTipText         = "Dil değiştir / Switch language"
-            isBorderPainted     = false
-            isContentAreaFilled = false
-            isFocusPainted      = false
-            font                = JBUI.Fonts.smallFont()
-            cursor              = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
-            foreground          = JBColor(Color(0x6B7280), Color(0x9CA3AF))
-            addActionListener { toggleLanguage() }
-            addMouseListener(object : MouseAdapter() {
-                override fun mouseEntered(e: MouseEvent) { isContentAreaFilled = true  }
-                override fun mouseExited(e: MouseEvent)  { isContentAreaFilled = false }
-            })
-        }
-
-        val leaderBtn = iconTextButton(
-            icon  = AllIcons.Actions.ListChanges,
-            label = "Liderlik",
-            tip   = "Liderlik tablosunu gör"
-        ) { BrowserUtil.browse("https://droidle.vercel.app/leaderboard") }
-
-        val logo = JBLabel("🤖 Droidle").apply {
-            font       = JBUI.Fonts.label(11f).deriveFont(java.awt.Font.BOLD)
-            foreground = JBColor(Color(0x10B981), Color(0x34D399))
-            border     = JBUI.Borders.emptyLeft(JBUI.scale(4))
-        }
-
-        return JPanel(BorderLayout()).apply {
-            border = CompoundBorder(
-                BorderFactory.createMatteBorder(
-                    0, 0, 1, 0,
-                    JBUI.CurrentTheme.CustomFrameDecorations.separatorForeground()
-                ),
-                JBUI.Borders.empty(JBUI.scale(3), JBUI.scale(6))
-            )
-            isOpaque = false
-
-            val right = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(4), 0)).apply {
-                isOpaque = false
-                add(langToggle)
-                add(loginBtn)
-                add(userLabel)
-                add(leaderBtn)
-            }
-            add(logo,  BorderLayout.WEST)
-            add(right, BorderLayout.EAST)
-        }
-    }
-
-    private fun refreshTopBar() {
-        val state       = StateManager.getInstance()
-        loginBtn.text   = loginLabel(state)
-        loginBtn.toolTipText = loginTip(state)
-        langToggle.text = state.language.label
-        userLabel.text  = "@${state.getUsername() ?: ""}"
-        userLabel.isVisible = state.isLoggedIn() && state.getUsername() != null
-        revalidate(); repaint()
-    }
-
-    private fun loginLabel(state: StateManager) =
-        if (state.isLoggedIn()) "Çıkış" else "Giriş Yap"
-
-    private fun loginTip(state: StateManager) =
-        if (state.isLoggedIn()) "Oturumu kapat" else "GitHub ile giriş yap"
-
-    private fun onLoginClick() {
-        val state = StateManager.getInstance()
-        if (state.isLoggedIn()) {
-            state.clearAuthToken()
-            state.clearUsername()
-            refreshTopBar()
-        } else {
-            BrowserUtil.browse("https://droidle.vercel.app/login?source=plugin")
-        }
-    }
-
-    /**
-     * Toggle language, then re-fetch the quiz so all text is in the new language.
-     * We use fetchQuizResult() (not start()) so we never short-circuit to DONE —
-     * the user should be able to read the questions even if already completed.
-     */
-    private fun toggleLanguage() {
-        val state = StateManager.getInstance()
-        state.language = if (state.language == AppLanguage.TR) AppLanguage.EN else AppLanguage.TR
-        refreshTopBar()
-        fetchQuiz()
-    }
-
-    private fun iconTextButton(
-        icon:    javax.swing.Icon,
-        label:   String,
-        tip:     String,
-        onClick: () -> Unit
-    ): JButton = JButton(label, icon).apply {
-        toolTipText         = tip
-        isBorderPainted     = false
-        isContentAreaFilled = false
-        isFocusPainted      = false
-        font                = JBUI.Fonts.smallFont()
-        cursor              = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
-        addActionListener { onClick() }
-        addMouseListener(object : MouseAdapter() {
-            override fun mouseEntered(e: MouseEvent) { isContentAreaFilled = true  }
-            override fun mouseExited(e: MouseEvent)  { isContentAreaFilled = false }
-        })
-    }
-
-    // ── Screen wiring ──────────────────────────────────────────────────────────
 
     private fun buildScreens() {
         loadingScreen = LoadingScreen()
-        errorScreen   = ErrorScreen(onRetry = ::start)
-        doneScreen    = DoneScreen(onOpenWeb = ::openWebsite)
+        errorScreen = ErrorScreen(onRetry = ::start)
 
-        quizScreen   = QuizScreen(onComplete = ::onQuizComplete, onError = ::showError)
-        resultScreen = ResultScreen(
-            correctCount = 0,
-            questions    = emptyList(),
-            earnedXp     = 0,
-            onOpenWeb    = ::openWebsite
-        )
-
-        deck.add(loadingScreen,  Screen.LOADING)
-        deck.add(quizScreen,     Screen.QUIZ)
-        deck.add(resultScreen,   Screen.RESULT)
-        deck.add(errorScreen,    Screen.ERROR)
-        deck.add(doneScreen,     Screen.DONE)
+        deck.add(loadingScreen, Screen.LOADING)
+        deck.add(errorScreen, Screen.ERROR)
     }
 
-    // ── Entry point ────────────────────────────────────────────────────────────
+    // ── Entry point & Supabase Synchronization ─────────────────────────────────
 
     /**
-     * Initial load / retry entry point.
-     * Short-circuits to DONE when local state already marks today as complete.
-     * Full server fetch otherwise (which may also short-circuit if server says completedToday).
+     * Initial startup & sync entry point.
+     * Evaluates remote Supabase state (Single Source of Truth) in Europe/Istanbul timezone.
      */
-    private fun start() {
+    fun start() {
         show(Screen.LOADING)
+        val state = StateManager.getInstance()
+        val today = state.todayIstanbulString()
+        var userId = state.getUserId()
 
-        if (StateManager.getInstance().isQuizCompletedToday()) {
-            // Local state already records completion — jump to DONE with known data.
-            // (Streak / score already persisted by recordQuizCompletion on that day.)
-            replaceDoneScreen(todayCorrect = null, todayTotal = null, todayXp = null)
-            show(Screen.DONE)
-            return
-        }
-
-        fetchQuiz()
-    }
-
-    /**
-     * Fetches today's quiz result from the server.
-     *
-     * If the server says completedToday=true (authenticated user already submitted):
-     *   → calls StateManager.syncFromServer() with streak + XP from server
-     *   → shows DONE screen with today's session data
-     *
-     * Otherwise replaces the QuizScreen and shows it.
-     */
-    private fun fetchQuiz() {
-        show(Screen.LOADING)
         ApplicationManager.getApplication().executeOnPooledThread {
             try {
-                val result = DroidleService.getInstance().fetchDailyQuizResult()
+                val supabase = SupabaseService.getInstance()
+
+                // If user is logged in but userId is not yet stored, resolve via auth endpoint
+                if (userId.isNullOrBlank() && state.isLoggedIn()) {
+                    val token = state.getAuthToken()
+                    if (token != null) {
+                        val fetchedId = supabase.fetchUserIdFromAuth(token)
+                        if (!fetchedId.isNullOrBlank()) {
+                            state.saveUserId(fetchedId)
+                            userId = fetchedId
+                        }
+                    }
+                }
+
+                // 1. Fetch remote profile if logged in
+                var profile: SupabaseProfile? = null
+                if (!userId.isNullOrBlank()) {
+                    profile = supabase.fetchProfile(userId)
+                    if (profile != null) {
+                        state.syncFromRemoteProfile(profile)
+                        SwingUtilities.invokeLater { header.refresh() }
+                    }
+                }
+
+                // 2. Fetch today's questions
+                var questions: List<Question> = emptyList()
+                try {
+                    val apiResult = DroidleService.getInstance().fetchDailyQuizResult()
+                    questions = apiResult.questions
+                } catch (_: Exception) {
+                    // Fallback handled below
+                }
+
+                if (questions.isEmpty()) {
+                    val supaQuestions = supabase.fetchQuestionsFromSupabase(today)
+                    if (supaQuestions != null && supaQuestions.isNotEmpty()) {
+                        questions = supaQuestions
+                    }
+                }
+
+                if (questions.isEmpty()) {
+                    throw IllegalStateException("Bugün için soru bulunamadı ($today).")
+                }
+                cachedQuestions = questions
+
+                // 3. Query Supabase daily_submissions for today's submission
+                var remoteSubmission: DailySubmissionRow? = null
+                if (!userId.isNullOrBlank()) {
+                    remoteSubmission = supabase.fetchTodaySubmission(userId, today)
+                }
+
+                val reconciled = reconcileDailySubmission(remoteSubmission, questions)
+
                 SwingUtilities.invokeLater {
-                    if (result.completedToday) {
-                        // Server is authoritative — sync local state and show DONE
-                        StateManager.getInstance().syncFromServer(
-                            correctCount  = result.correctCount ?: 0,
-                            totalCount    = result.questions.size.takeIf { it > 0 }
-                                ?: result.correctCount?.let { it + 1 } ?: 1,
-                            serverStreak  = result.currentStreak,
-                            earnedXp      = result.earnedXp ?: 0
+                    if (remoteSubmission != null) {
+                        // Supabase daily_submissions is the Single Source of Truth
+                        if (reconciled.isComplete) {
+                            // Sadece 5 sorunun tamamı cevaplanmışsa Sonuç Ekranını göster.
+                            state.syncFromServer(
+                                correctCount = reconciled.score,
+                                totalCount = questions.size,
+                                earnedXp = reconciled.earnedXp,
+                                selectedOptions = reconciled.selectedOptions,
+                                answers = reconciled.answers
+                            )
+                            if (!userId.isNullOrBlank() && (profile == null || profile.last_completed_date != today)) {
+                                ApplicationManager.getApplication().executeOnPooledThread {
+                                    supabase.updateProfile(
+                                        userId = userId,
+                                        currentStreak = state.currentStreak,
+                                        maxStreak = state.longestStreak,
+                                        totalXp = state.totalXp,
+                                        lastCompletedDate = today
+                                    )
+                                }
+                            }
+                            showResultScreen(
+                                correctCount = reconciled.score,
+                                questions = questions,
+                                earnedXp = reconciled.earnedXp,
+                                selectedOptions = reconciled.selectedOptions,
+                                answers = reconciled.answers
+                            )
+                        } else {
+                            // Cevaplanan soru sayısı 5'ten azsa Sonuç Ekranını AÇMA;
+                            // Yerel StateManager'ı uzaktaki kısmi durumla senkronize et ve web ile tam uyumlu
+                            // olarak ilk cevaplanmamış sorudan (reconciled.firstUnansweredIndex) devam ettir.
+                            state.savePartialSession(
+                                today = state.todayIstanbul(),
+                                score = reconciled.score,
+                                earnedXp = reconciled.earnedXp,
+                                selectedOptions = reconciled.selectedOptions,
+                                answers = reconciled.answers
+                            )
+                            val resumeIndex = reconciled.firstUnansweredIndex
+                            showQuizScreen(
+                                questions = questions,
+                                initialIndex = resumeIndex,
+                                initialSelectedOptions = reconciled.selectedOptions,
+                                initialAnswers = reconciled.answers
+                            )
+                        }
+                    } else if (state.isQuizCompletedToday()) {
+                        // Offline / Guest local completion fallback
+                        showResultScreen(
+                            correctCount = state.todayScore,
+                            questions = questions,
+                            earnedXp = state.todayEarnedXp,
+                            selectedOptions = state.getTodaySelectedOptions(),
+                            answers = state.getTodayAnswers()
                         )
-                        replaceDoneScreen(
-                            todayCorrect = result.correctCount,
-                            todayTotal   = result.questions.size.takeIf { it > 0 },
-                            todayXp      = result.earnedXp
+                    } else if (state.hasTodayPartialProgress()) {
+                        // Offline / Guest partial progress resume fallback (strictly for today's Istanbul date)
+                        val localAnswers = state.getTodayAnswers()
+                        val localOptions = state.getTodaySelectedOptions()
+                        val resumeIndex = questions.indices.firstOrNull { i ->
+                            val q = questions[i]
+                            val opt = localOptions.getOrNull(i) ?: -1
+                            val ans = localAnswers[q.id]?.resolvedSelectedOption ?: localAnswers[i.toString()]?.resolvedSelectedOption
+                            (opt !in 0..3) && (ans == null || ans.uppercase() !in OPTION_KEYS)
+                        } ?: 0
+                        showQuizScreen(
+                            questions = questions,
+                            initialIndex = resumeIndex,
+                            initialSelectedOptions = localOptions,
+                            initialAnswers = localAnswers
                         )
-                        show(Screen.DONE)
                     } else {
-                        replaceQuizScreen(result.questions)
-                        show(Screen.QUIZ)
+                        // Fresh daily quiz
+                        showQuizScreen(questions = questions)
                     }
                 }
             } catch (e: Exception) {
                 SwingUtilities.invokeLater {
-                    showError(e.message ?: "Bilinmeyen hata")
+                    showError(e.message ?: "Bağlantı hatası oluştu.")
                 }
             }
         }
     }
 
-    // ── Screen transitions ─────────────────────────────────────────────────────
-
-    private fun replaceQuizScreen(questions: List<Question>) {
-        deck.remove(quizScreen)
+    private fun showQuizScreen(
+        questions: List<Question>,
+        initialIndex: Int = 0,
+        initialSelectedOptions: List<Int> = emptyList(),
+        initialAnswers: Map<String, UserAnswerPayload> = emptyMap()
+    ) {
+        if (quizScreen != null) deck.remove(quizScreen)
         quizScreen = QuizScreen(
-            questions  = questions,
+            questions = questions,
+            initialIndex = initialIndex,
+            initialSelectedOptions = initialSelectedOptions,
+            initialAnswers = initialAnswers,
+            project = project,
             onComplete = ::onQuizComplete,
-            onError    = ::showError
+            onError = ::showError
         )
-        deck.add(quizScreen, Screen.QUIZ)
+        deck.add(quizScreen!!, Screen.QUIZ)
         deck.revalidate()
+        show(Screen.QUIZ)
     }
 
-    private fun replaceDoneScreen(
-        todayCorrect: Int?,
-        todayTotal:   Int?,
-        todayXp:      Int?
+    private fun showResultScreen(
+        correctCount: Int,
+        questions: List<Question>,
+        earnedXp: Int,
+        selectedOptions: List<Int>,
+        answers: Map<String, UserAnswerPayload>
     ) {
-        deck.remove(doneScreen)
-        doneScreen = DoneScreen(
-            todayCorrect = todayCorrect,
-            todayTotal   = todayTotal,
-            todayXp      = todayXp,
-            onOpenWeb    = ::openWebsite
-        )
-        deck.add(doneScreen, Screen.DONE)
-        deck.revalidate()
-    }
-
-    /**
-     * Called by QuizScreen when the last question is answered.
-     *
-     * @param correctCount      Number of correct answers in this session.
-     * @param questions         Full question list (for ResultScreen breakdown).
-     * @param earnedXp          Total XP earned (from verified server responses or local fallback).
-     * @param categoryResults   Per-category stats accumulated during the quiz.
-     */
-    private fun onQuizComplete(
-        correctCount:    Int,
-        questions:       List<Question>,
-        earnedXp:        Int,
-        categoryResults: Map<String, CategoryResult>
-    ) {
-        // Persist — double-count guard is inside StateManager
-        StateManager.getInstance().recordQuizCompletion(
-            correctCount    = correctCount,
-            totalCount      = questions.size,
-            earnedXp        = earnedXp,
-            categoryResults = categoryResults
-        )
-
-        deck.remove(resultScreen)
+        if (resultScreen != null) deck.remove(resultScreen)
         resultScreen = ResultScreen(
             correctCount = correctCount,
-            questions    = questions,
-            earnedXp     = earnedXp,
-            onOpenWeb    = ::openWebsite
+            questions = questions,
+            earnedXp = earnedXp,
+            selectedOptions = selectedOptions,
+            answers = answers,
+            project = project,
+            onOpenWeb = { BrowserUtil.browse("https://droidle.vercel.app/leaderboard") }
         )
-        deck.add(resultScreen, Screen.RESULT)
+        deck.add(resultScreen!!, Screen.RESULT)
         deck.revalidate()
         show(Screen.RESULT)
+    }
+
+    // ── Quiz Completion & Supabase Write State ─────────────────────────────────
+
+    /**
+     * Called when the 5th question is completed in the plugin.
+     * Writes state to Supabase (daily_submissions UPSERT and profiles UPDATE) and local StateManager.
+     */
+    private fun onQuizComplete(
+        correctCount: Int,
+        questions: List<Question>,
+        earnedXp: Int,
+        selectedOptions: List<Int>,
+        answers: Map<String, UserAnswerPayload>,
+        categoryResults: Map<String, CategoryResult>
+    ) {
+        val state = StateManager.getInstance()
+        val today = state.todayIstanbulString()
+        val userId = state.getUserId()
+
+        // 1. Persist locally - only update streak and completion date if 5 questions completed
+        if (answers.size >= 5) {
+            state.recordQuizCompletion(
+                correctCount = correctCount,
+                totalCount = questions.size,
+                earnedXp = earnedXp,
+                selectedOptions = selectedOptions,
+                answers = answers,
+                categoryResults = categoryResults
+            )
+        } else {
+            state.savePartialSession(
+                today = state.todayIstanbul(),
+                score = correctCount,
+                earnedXp = earnedXp,
+                selectedOptions = selectedOptions,
+                answers = answers
+            )
+        }
+
+        // 2. Persist to Supabase if logged in (Single Source of Truth)
+        if (!userId.isNullOrBlank()) {
+            ApplicationManager.getApplication().executeOnPooledThread {
+                val supabase = SupabaseService.getInstance()
+
+                // A: UPSERT daily_submissions
+                val subPayload = DailySubmissionPayload(
+                    user_id = userId,
+                    date = today,
+                    score = correctCount,
+                    earned_xp = earnedXp,
+                    answers = answers,
+                    selected_options = selectedOptions
+                )
+                supabase.upsertDailySubmission(subPayload)
+
+                // B: UPDATE profiles (streak, max_streak, total_xp, last_completed_date)
+                // Sadece 5. soru tamamlandığında profiles tablosunu güncelle!
+                if (answers.size >= 5) {
+                    val currentStreak = state.currentStreak
+                    val maxStreak = state.longestStreak
+                    val totalXp = state.totalXp
+                    supabase.updateProfile(userId, currentStreak, maxStreak, totalXp, today)
+                }
+            }
+        }
+
+        // 3. Show ResultScreen with the 5 Android Bugdroids if quiz completed
+        if (answers.size >= 5) {
+            showResultScreen(
+                correctCount = correctCount,
+                questions = questions,
+                earnedXp = earnedXp,
+                selectedOptions = selectedOptions,
+                answers = answers
+            )
+            header.refresh()
+        }
+    }
+
+    // ── Header Actions ─────────────────────────────────────────────────────────
+
+    private fun toggleLanguage() {
+        val state = StateManager.getInstance()
+        state.language = if (state.language == AppLanguage.TR) AppLanguage.EN else AppLanguage.TR
+        header.refresh()
+        quizScreen?.refreshLanguage()
+    }
+
+    private fun onLoginClick() {
+        BrowserUtil.browse("https://droidle.vercel.app/login?source=plugin")
+    }
+
+    private fun onLogoutClick() {
+        val state = StateManager.getInstance()
+        state.clearAuthToken()
+        header.refresh()
+        start()
     }
 
     private fun showError(msg: String) {
@@ -363,7 +388,7 @@ class DroidleToolWindowPanel(private val project: Project) : JPanel(BorderLayout
         show(Screen.ERROR)
     }
 
-    private fun show(name: String) { cards.show(deck, name) }
-
-    private fun openWebsite() { BrowserUtil.browse("https://droidle.vercel.app") }
+    private fun show(name: String) {
+        cards.show(deck, name)
+    }
 }

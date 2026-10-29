@@ -48,8 +48,10 @@ class DroidleService {
 
     @Throws(IOException::class)
     fun fetchDailyQuizResult(): QuizFetchResult {
-        val token = service<StateManager>().getAuthToken()
-        val url = "$baseUrl/api/daily-quiz"
+        val state = service<StateManager>()
+        val token = state.getAuthToken()
+        val today = state.todayIstanbulString()
+        val url = "$baseUrl/api/daily-quiz?date=$today"
         val requestBuilder = Request.Builder()
             .url(url)
             .applyCommonHeaders()

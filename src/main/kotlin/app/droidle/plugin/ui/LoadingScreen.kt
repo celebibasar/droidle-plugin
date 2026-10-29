@@ -1,5 +1,7 @@
 package app.droidle.plugin.ui
 
+import app.droidle.plugin.state.AppLanguage
+import app.droidle.plugin.state.StateManager
 import com.intellij.ui.AnimatedIcon
 import com.intellij.ui.components.JBLabel
 import com.intellij.util.ui.JBUI
@@ -12,6 +14,7 @@ import javax.swing.JPanel
 class LoadingScreen : JPanel(GridBagLayout()) {
 
     private val green = Color(0x10, 0xB9, 0x81)
+    private val captionLabel: JBLabel
 
     init {
         border = JBUI.Borders.empty()
@@ -33,10 +36,22 @@ class LoadingScreen : JPanel(GridBagLayout()) {
         // Big spinner
         add(JBLabel(AnimatedIcon.Big()), gbc.also { it.insets = Insets(0, 0, JBUI.scale(12), 0) })
 
-        // Caption
-        add(JBLabel("Günlük sorular yükleniyor...").apply {
+        // Caption — language-aware
+        captionLabel = JBLabel(caption()).apply {
             font = JBUI.Fonts.label(12f)
             foreground = JBUI.CurrentTheme.Label.disabledForeground()
-        }, gbc.also { it.insets = Insets(0, 0, 0, 0) })
+        }
+        add(captionLabel, gbc.also { it.insets = Insets(0, 0, 0, 0) })
     }
+
+    /** Call this when the language changes so the caption updates instantly. */
+    fun refreshLanguage() {
+        captionLabel.text = caption()
+    }
+
+    private fun caption(): String =
+        if (StateManager.getInstance().language == AppLanguage.EN)
+            "Loading daily questions..."
+        else
+            "Günlük sorular yükleniyor..."
 }

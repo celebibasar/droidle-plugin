@@ -1,634 +1,641 @@
 package app.droidle.plugin.ui
 
-import app.droidle.plugin.model.DocLink
-import app.droidle.plugin.model.Question
-import app.droidle.plugin.model.VerifyResponse
+import app.droidle.plugin.model.*
 import app.droidle.plugin.service.DroidleService
+import app.droidle.plugin.service.SupabaseService
 import app.droidle.plugin.state.AppLanguage
 import app.droidle.plugin.state.CategoryResult
 import app.droidle.plugin.state.StateManager
-import com.intellij.icons.AllIcons
-import com.intellij.ide.BrowserUtil
+import app.droidle.plugin.ui.components.AutoWrappingHtmlLabel
+import app.droidle.plugin.ui.components.ModernCodeSnippet
+import app.droidle.plugin.ui.components.ModernExplanationCard
+import app.droidle.plugin.ui.components.ModernOptionCard
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.ui.AnimatedIcon
+import com.intellij.openapi.project.Project
 import com.intellij.ui.JBColor
-import com.intellij.ui.RoundedLineBorder
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
-import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
 import java.awt.*
-import java.awt.event.MouseAdapter
-import java.awt.event.MouseEvent
+import java.awt.event.KeyAdapter
+import java.awt.event.KeyEvent
+import java.time.Instant
 import javax.swing.*
 import javax.swing.border.CompoundBorder
 
 /**
- * Native quiz screen.
+ * Modern Native Quiz Screen with JetBrains New UI / Linear aesthetic.
  *
- * State machine (mirrors web src/lib/quiz-machine.ts quizReducer):
- *   DEFAULT → option clicked → [server verify] → ANSWERED → next → next question
- *   On last question → ANSWERED → onComplete(correctCount, questions, earnedXp, categoryResults)
- *
- * Key invariants:
- *  - `correctCount` and `earnedXp` are only incremented from server-verified results.
- *  - Fallback (local) evaluation uses question.correct_answer; XP uses question.xpValue.
- *  - `answered` flag is set before the network call so rapid clicks don't double-count.
- *  - `categoryResults` accumulates per-category stats for StateManager.recordQuizCompletion().
+ * Features:
+ * - Perfectly left-aligned layout with 100% horizontal expansion (no rightward shift).
+ * - 0ms Instant Feedback on option click (emerald green if correct, rose red if wrong).
+ * - ModernOptionCards with keyboard badges [A], [B], [C], [D] and keyboard shortcuts.
+ * - IntelliJ EditorTextField Kotlin code snippets.
+ * - Technical explanation card with syntax-highlighted code chips and official doc link.
+ * - Prominent full-width Next Question action button.
+ * - Instant partial progress synchronization to Supabase daily_submissions on each answer.
  */
 class QuizScreen(
     private val questions: List<Question> = emptyList(),
+    private val initialIndex: Int = 0,
+    private val initialSelectedOptions: List<Int> = emptyList(),
+    private val initialAnswers: Map<String, UserAnswerPayload> = emptyMap(),
+    private val project: Project? = null,
     private val onComplete: (
         correctCount: Int,
         questions: List<Question>,
         earnedXp: Int,
+        selectedOptions: List<Int>,
+        answers: Map<String, UserAnswerPayload>,
         categoryResults: Map<String, CategoryResult>
     ) -> Unit,
     private val onError: (String) -> Unit
 ) : JPanel(BorderLayout(0, 0)) {
 
-    // ── Quiz state ─────────────────────────────────────────────────────────────
-    private var currentIndex    = 0
-    private var correctCount    = 0
-    private var earnedXp        = 0
-    private var answered        = false
+    private var currentIndex = initialIndex.coerceIn(0, (questions.size - 1).coerceAtLeast(0))
+    private var correctCount = 0
+    private var earnedXp = 0
+    private var answered = false
     private var selectedKey: String? = null
 
-    /** category → CategoryResult, accumulated as questions are answered. */
+    // Track answers and selected options for 100% Supabase synchronization
+    private val selectedOptionsList = MutableList(questions.size) { -1 }
+    private val answersMap = mutableMapOf<String, UserAnswerPayload>()
     private val categoryResults = mutableMapOf<String, CategoryResult>()
 
-    // ── Header ─────────────────────────────────────────────────────────────────
-    private val dotsPanel     = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0))
+    // UI Components
+    private fun currentLanguage(): AppLanguage = try {
+        StateManager.getInstance().language
+    } catch (_: Throwable) {
+        AppLanguage.TR
+    }
+
+    private val dotsPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)).apply {
+        isOpaque = false
+        alignmentX = Component.LEFT_ALIGNMENT
+    }
     private val categoryLabel = JBLabel("").apply {
-        font       = JBUI.Fonts.smallFont()
+        font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
         foreground = JBUI.CurrentTheme.Label.disabledForeground()
     }
+    private val difficultyPill = object : JBLabel("") {
+        var pillColor: Color = Color(0x10, 0xB9, 0x81)
 
-    // ── Body ───────────────────────────────────────────────────────────────────
-    private val questionLabel = JBLabel("").apply { font = JBUI.Fonts.label(13f) }
+        init {
+            font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
+            border = JBUI.Borders.empty(JBUI.scale(2), JBUI.scale(8))
+            isOpaque = false
+        }
 
-    private val codeArea = JBTextArea(4, 0).apply {
-        isEditable  = false
-        lineWrap    = false
-        font        = Font(Font.MONOSPACED, Font.PLAIN, JBUI.scaleFontSize(11f).toInt())
-        border      = JBUI.Borders.empty(JBUI.scale(8))
-        background  = JBColor(Color(0x1E1E1E), Color(0x1E1E1E))
-        foreground  = JBColor(Color(0xD4D4D4), Color(0xD4D4D4))
-        isVisible   = false
+        override fun paintComponent(g: Graphics) {
+            val g2 = g.create() as Graphics2D
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                g2.color = Color(pillColor.red, pillColor.green, pillColor.blue, 30)
+                g2.fillRoundRect(0, 0, width, height, height, height)
+                g2.color = Color(pillColor.red, pillColor.green, pillColor.blue, 180)
+                g2.stroke = BasicStroke(1f)
+                g2.drawRoundRect(0, 0, width - 1, height - 1, height, height)
+            } finally {
+                g2.dispose()
+            }
+            super.paintComponent(g)
+        }
     }
 
-    private val optionCards  = mutableListOf<OptionCard>()
-    private val optionsPanel = JPanel().apply {
-        layout   = BoxLayout(this, BoxLayout.Y_AXIS)
+    private val questionLabel = AutoWrappingHtmlLabel("").apply {
+        font = JBUI.Fonts.label(13.5f).deriveFont(Font.BOLD)
+        horizontalAlignment = SwingConstants.LEFT
+        verticalAlignment = SwingConstants.TOP
+        alignmentX = Component.LEFT_ALIGNMENT
+    }
+
+    private val questionWrapper = object : JPanel(BorderLayout()) {
+        override fun getMaximumSize(): Dimension = Dimension(Int.MAX_VALUE, preferredSize.height)
+    }.apply {
         isOpaque = false
+        alignmentX = Component.LEFT_ALIGNMENT
+        add(questionLabel, BorderLayout.CENTER)
     }
-    private val explanationPanel = ExplanationPanel().apply { isVisible = false }
 
-    // ── XP chip (shown after answer) ───────────────────────────────────────────
-    private val xpChip = XpChip(0).apply { isVisible = false }
+    private val codeSnippetComponent = ModernCodeSnippet(project).apply {
+        alignmentX = Component.LEFT_ALIGNMENT
+    }
+    private val codeSnippetBottomGap = vGap(12)
 
-    // ── Footer ─────────────────────────────────────────────────────────────────
-    private val nextButton = JButton("Sonraki Soru").apply {
-        isEnabled = false
+    private val optionCards = mutableListOf<ModernOptionCard>()
+    private val optionsPanel = object : JPanel() {
+        override fun getMaximumSize(): Dimension = Dimension(Int.MAX_VALUE, preferredSize.height)
+    }.apply {
+        layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        isOpaque = false
+        alignmentX = Component.LEFT_ALIGNMENT
+    }
+
+    private val explanationCard = ModernExplanationCard().apply {
         isVisible = false
-        addActionListener { advance() }
+        alignmentX = Component.LEFT_ALIGNMENT
     }
-    private val checkingIcon = JBLabel(AnimatedIcon.Default()).apply { isVisible = false }
 
-    // ── Init ───────────────────────────────────────────────────────────────────
+    private val nextButton = object : JButton("Sonraki Soru →") {
+        init {
+            isBorderPainted = false
+            isContentAreaFilled = false
+            isFocusPainted = false
+            foreground = Color.WHITE
+            font = JBUI.Fonts.label(13f).deriveFont(Font.BOLD)
+            cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            preferredSize = Dimension(0, JBUI.scale(40))
+            maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(40))
+            alignmentX = Component.LEFT_ALIGNMENT
+            isEnabled = false
+            isVisible = false
+            addActionListener { advance() }
+        }
+
+        override fun paintComponent(g: Graphics) {
+            val g2 = g.create() as Graphics2D
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                val bg = if (model.isPressed) Color(0x05, 0x96, 0x69)
+                else if (model.isRollover) Color(0x0D, 0xA2, 0x70)
+                else Color(0x10, 0xB9, 0x81)
+                g2.color = bg
+                g2.fillRoundRect(0, 0, width, height, JBUI.scale(10), JBUI.scale(10))
+            } finally {
+                g2.dispose()
+            }
+            super.paintComponent(g)
+        }
+    }
+
+    private val footerPanel = object : JPanel(BorderLayout()) {
+        override fun getMaximumSize(): Dimension = Dimension(Int.MAX_VALUE, preferredSize.height)
+    }.apply {
+        border = CompoundBorder(
+            BorderFactory.createMatteBorder(
+                1, 0, 0, 0,
+                JBUI.CurrentTheme.CustomFrameDecorations.separatorForeground()
+            ),
+            JBUI.Borders.empty(JBUI.scale(10), JBUI.scale(14), JBUI.scale(10), JBUI.scale(14))
+        )
+        isOpaque = false
+        alignmentX = Component.LEFT_ALIGNMENT
+        isVisible = false
+        add(nextButton, BorderLayout.CENTER)
+    }
+
     init {
         border = JBUI.Borders.empty()
+        isOpaque = false
+
+        val optionKeys = listOf("A", "B", "C", "D")
+
+        // Seed initial answers and options if resuming
+        if (initialSelectedOptions.isNotEmpty()) {
+            initialSelectedOptions.forEachIndexed { i, opt ->
+                if (i < selectedOptionsList.size) selectedOptionsList[i] = opt
+            }
+        }
+        answersMap.putAll(initialAnswers)
+
+        // Fully reconcile any already-answered questions
+        questions.forEachIndexed { i, q ->
+            var ans = answersMap[q.id] ?: answersMap[i.toString()]
+            var optIdx = selectedOptionsList.getOrNull(i) ?: -1
+
+            if (optIdx !in 0..3 && ans != null && !ans.selectedOption.isNullOrBlank()) {
+                optIdx = optionKeys.indexOf(ans.selectedOption!!.uppercase())
+                if (optIdx in 0..3) selectedOptionsList[i] = optIdx
+            }
+
+            val chosenKey = ans?.selectedOption ?: (if (optIdx in 0..3) optionKeys[optIdx] else null)
+            val correctKey = q.resolvedCorrectAnswer ?: ans?.correctAnswer ?: "A"
+            val isCorrect = ans?.isCorrect ?: (chosenKey?.equals(correctKey, ignoreCase = true) == true)
+            val xp = if (isCorrect) (ans?.xpEarned ?: q.xpValue) else 0
+
+            if (optIdx in 0..3 && ans == null && chosenKey != null) {
+                ans = UserAnswerPayload(
+                    questionId = q.id,
+                    selectedOption = chosenKey,
+                    isCorrect = isCorrect,
+                    correctAnswer = correctKey,
+                    category = q.category,
+                    difficulty = q.difficulty,
+                    xpEarned = xp,
+                    explanation = q.explanation,
+                    explanation_tr = q.explanation_tr,
+                    explanation_en = q.explanation_en,
+                    docLinks = q.doc_links
+                )
+                answersMap[q.id] = ans
+            } else if (ans != null && (ans.isCorrect == null || ans.xpEarned == null || ans.questionId == null)) {
+                ans = ans.copy(
+                    questionId = ans.questionId ?: q.id,
+                    selectedOption = chosenKey,
+                    isCorrect = isCorrect,
+                    correctAnswer = correctKey,
+                    category = ans.category ?: q.category,
+                    difficulty = ans.difficulty ?: q.difficulty,
+                    xpEarned = xp,
+                    explanation = if (ans.explanation.isNullOrBlank()) q.explanation else ans.explanation,
+                    explanation_tr = if (ans.explanation_tr.isNullOrBlank()) q.explanation_tr else ans.explanation_tr,
+                    explanation_en = if (ans.explanation_en.isNullOrBlank()) q.explanation_en else ans.explanation_en,
+                    docLinks = if (ans.docLinks.isEmpty()) q.doc_links else ans.docLinks
+                )
+                answersMap[q.id] = ans
+            }
+
+            if (ans != null && optIdx in 0..3) {
+                if (ans.isCorrect == true) correctCount++
+                if (ans.xpEarned != null) earnedXp += ans.xpEarned
+                val cat = ans.category ?: q.category
+                categoryResults[cat] = CategoryResult(
+                    attempted = (categoryResults[cat]?.attempted ?: 0) + 1,
+                    correct = (categoryResults[cat]?.correct ?: 0) + (if (ans.isCorrect == true) 1 else 0)
+                )
+            }
+        }
+
         buildLayout()
-        if (questions.isNotEmpty()) showQuestion(0)
+        setupKeyboardNavigation()
+
+        if (questions.isNotEmpty()) {
+            showQuestion(currentIndex)
+        }
     }
 
-    // ── Layout ─────────────────────────────────────────────────────────────────
+    private fun vGap(h: Int): Component = Box.createRigidArea(Dimension(0, JBUI.scale(h))).apply {
+        if (this is JComponent) alignmentX = Component.LEFT_ALIGNMENT
+    }
 
     private fun buildLayout() {
+        // Header
         val headerPanel = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
             border = CompoundBorder(
                 BorderFactory.createMatteBorder(
                     0, 0, 1, 0,
                     JBUI.CurrentTheme.CustomFrameDecorations.separatorForeground()
                 ),
-                JBUI.Borders.empty(JBUI.scale(8), JBUI.scale(12))
+                JBUI.Borders.empty(JBUI.scale(8), JBUI.scale(14))
             )
             isOpaque = false
-            add(dotsPanel,     BorderLayout.WEST)
-            add(categoryLabel, BorderLayout.EAST)
-        }
+            alignmentX = Component.LEFT_ALIGNMENT
+            add(dotsPanel, BorderLayout.WEST)
 
-        val bodyPanel = JPanel().apply {
-            layout   = BoxLayout(this, BoxLayout.Y_AXIS)
-            isOpaque = false
-            border   = JBUI.Borders.empty(
-                JBUI.scale(14), JBUI.scale(12),
-                JBUI.scale(8),  JBUI.scale(12)
-            )
-
-            add(questionLabel)
-            add(Box.createVerticalStrut(JBUI.scale(12)))
-
-            val codeScroll = JBScrollPane(codeArea).apply {
-                horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
-                verticalScrollBarPolicy   = JScrollPane.VERTICAL_SCROLLBAR_NEVER
-                preferredSize             = Dimension(Int.MAX_VALUE, JBUI.scale(130))
-                minimumSize               = Dimension(0, JBUI.scale(60))
-                alignmentX                = Component.LEFT_ALIGNMENT
-                isVisible                 = false
-                border                    = RoundedLineBorder(
-                    JBColor(Color(0x3C3C3C), Color(0x3C3C3C)), JBUI.scale(6)
-                )
+            val metaRight = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(6), 0)).apply {
+                isOpaque = false
+                add(categoryLabel)
+                add(difficultyPill)
             }
-            add(codeScroll)
-            add(Box.createVerticalStrut(JBUI.scale(10)))
-            add(optionsPanel)
-            add(Box.createVerticalStrut(JBUI.scale(8)))
-            add(xpChip)
-            add(Box.createVerticalStrut(JBUI.scale(8)))
-            add(explanationPanel)
+            add(metaRight, BorderLayout.EAST)
         }
+
+        // Body with Scrollable viewport width tracking to guarantee 100% horizontal expansion
+        val bodyPanel = object : JPanel(), Scrollable {
+            init {
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                isOpaque = false
+                border = JBUI.Borders.empty(JBUI.scale(14), JBUI.scale(14), JBUI.scale(16), JBUI.scale(14))
+                alignmentX = Component.LEFT_ALIGNMENT
+            }
+            override fun getScrollableTracksViewportWidth(): Boolean = true
+            override fun getScrollableTracksViewportHeight(): Boolean = false
+            override fun getPreferredScrollableViewportSize(): Dimension = preferredSize
+            override fun getScrollableBlockIncrement(visibleRect: Rectangle?, orientation: Int, direction: Int): Int = JBUI.scale(20)
+            override fun getScrollableUnitIncrement(visibleRect: Rectangle?, orientation: Int, direction: Int): Int = JBUI.scale(10)
+        }
+
+        bodyPanel.add(questionWrapper)
+        bodyPanel.add(vGap(12))
+        bodyPanel.add(codeSnippetComponent)
+        bodyPanel.add(codeSnippetBottomGap)
+        bodyPanel.add(optionsPanel)
+        bodyPanel.add(vGap(12))
+        bodyPanel.add(explanationCard)
 
         val scrollPane = JBScrollPane(bodyPanel).apply {
-            border                    = JBUI.Borders.empty()
-            verticalScrollBarPolicy   = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
+            border = JBUI.Borders.empty()
+            verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
             horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_NEVER
         }
 
-        val footerPanel = JPanel(
-            FlowLayout(FlowLayout.RIGHT, JBUI.scale(8), JBUI.scale(6))
-        ).apply {
-            border = CompoundBorder(
-                BorderFactory.createMatteBorder(
-                    1, 0, 0, 0,
-                    JBUI.CurrentTheme.CustomFrameDecorations.separatorForeground()
-                ),
-                JBUI.Borders.empty(JBUI.scale(4), JBUI.scale(8))
-            )
-            isOpaque = false
-            add(checkingIcon)
-            add(nextButton)
-        }
-
         add(headerPanel, BorderLayout.NORTH)
-        add(scrollPane,  BorderLayout.CENTER)
+        add(scrollPane, BorderLayout.CENTER)
         add(footerPanel, BorderLayout.SOUTH)
     }
 
-    // ── Question rendering ─────────────────────────────────────────────────────
+    private fun setupKeyboardNavigation() {
+        isFocusable = true
+        addKeyListener(object : KeyAdapter() {
+            override fun keyPressed(e: KeyEvent) {
+                if (answered) {
+                    if (e.keyCode == KeyEvent.VK_ENTER || e.keyCode == KeyEvent.VK_SPACE) {
+                        advance()
+                    }
+                    return
+                }
+
+                val key = when (e.keyCode) {
+                    KeyEvent.VK_A, KeyEvent.VK_1 -> "A"
+                    KeyEvent.VK_B, KeyEvent.VK_2 -> "B"
+                    KeyEvent.VK_C, KeyEvent.VK_3 -> "C"
+                    KeyEvent.VK_D, KeyEvent.VK_4 -> "D"
+                    else -> null
+                }
+                if (key != null && currentIndex in questions.indices) {
+                    val q = questions[currentIndex]
+                    onOptionSelected(key, q)
+                }
+            }
+        })
+    }
 
     private fun showQuestion(index: Int) {
         currentIndex = index
-        answered     = false
-        selectedKey  = null
+        answered = false
+        selectedKey = null
 
-        val q    = questions[index]
-        val lang = StateManager.getInstance().language
+        val q = questions[index]
+        val lang = currentLanguage()
 
-        // Progress dots
+        // Update progress dots
         dotsPanel.removeAll()
         questions.forEachIndexed { i, _ ->
-            dotsPanel.add(DotIndicator(state = when {
-                i < index  -> DotState.DONE
-                i == index -> DotState.ACTIVE
-                else       -> DotState.TODO
-            }))
+            val dot = object : JComponent() {
+                init {
+                    val s = JBUI.scale(8)
+                    preferredSize = Dimension(s, s)
+                    minimumSize = preferredSize
+                    maximumSize = preferredSize
+                    isOpaque = false
+                    alignmentX = Component.LEFT_ALIGNMENT
+                }
+
+                override fun paintComponent(g: Graphics) {
+                    val g2 = g as Graphics2D
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                    val s = JBUI.scale(8)
+                    when {
+                        i < index -> {
+                            g2.color = Color(0x10, 0xB9, 0x81)
+                            g2.fillOval(0, 0, s, s)
+                        }
+                        i == index -> {
+                            g2.color = Color(0x10, 0xB9, 0x81)
+                            g2.fillOval(0, 0, s, s)
+                            g2.color = Color.WHITE
+                            val inner = JBUI.scale(4)
+                            val off = (s - inner) / 2
+                            g2.fillOval(off, off, inner, inner)
+                        }
+                        else -> {
+                            g2.color = JBColor(Color(0xD4D4D8), Color(0x3F3F46))
+                            g2.fillOval(0, 0, s, s)
+                        }
+                    }
+                }
+            }
+            dotsPanel.add(dot)
         }
 
         categoryLabel.text = q.category
-        questionLabel.text = "<html><body style='width:100%'>${q.displayQuestion(lang)}</body></html>"
-        questionLabel.alignmentX = Component.LEFT_ALIGNMENT
+        val diffColor = when (q.difficulty) {
+            "Junior" -> Color(0x10, 0xB9, 0x81)
+            "Mid"    -> Color(0x3B, 0x82, 0xF6)
+            "Senior" -> Color(0xF5, 0x9E, 0x0B)
+            "Expert" -> Color(0xEF, 0x44, 0x44)
+            else     -> Color(0x10, 0xB9, 0x81)
+        }
+        difficultyPill.text = q.difficulty
+        difficultyPill.pillColor = diffColor
+        difficultyPill.foreground = diffColor
+
+        // Format question text with syntax-highlighted code tokens and strict left-alignment
+        questionLabel.text = TextFormatter.formatQuestionHtml(q.displayQuestion(lang))
 
         // Code snippet
-        val snippet = q.code_snippet
-        if (!snippet.isNullOrBlank()) {
-            codeArea.text      = snippet.trim()
-            codeArea.isVisible = true
-            (codeArea.parent?.parent as? JScrollPane)?.isVisible = true
+        val hasSnippet = !q.code_snippet.isNullOrBlank()
+        if (hasSnippet) {
+            codeSnippetComponent.setCode(q.code_snippet!!, q.code_language)
+            codeSnippetComponent.isVisible = true
+            codeSnippetBottomGap.isVisible = true
         } else {
-            codeArea.isVisible = false
-            (codeArea.parent?.parent as? JScrollPane)?.isVisible = false
+            codeSnippetComponent.isVisible = false
+            codeSnippetBottomGap.isVisible = false
         }
 
-        // Option cards
+        // Build option cards
         optionsPanel.removeAll()
         optionCards.clear()
         val opts = q.displayOptions(lang)
-        listOf("A", "B", "C", "D").forEach { key ->
-            val text = opts[key] ?: return@forEach
-            val card = OptionCard(key = key, text = text) { onOptionSelected(key, q) }
+
+        val keys = listOf("A", "B", "C", "D")
+        keys.forEachIndexed { i, key ->
+            val text = opts[key] ?: return@forEachIndexed
+            val card = ModernOptionCard(key = key, optionText = text) {
+                onOptionSelected(key, q)
+            }
+            card.alignmentX = Component.LEFT_ALIGNMENT
             optionCards.add(card)
             optionsPanel.add(card)
-            optionsPanel.add(Box.createVerticalStrut(JBUI.scale(6)))
+            if (i < keys.size - 1) {
+                optionsPanel.add(vGap(6))
+            }
         }
 
-        xpChip.isVisible         = false
-        explanationPanel.isVisible = false
-        nextButton.isVisible     = false
-        nextButton.isEnabled     = false
-        nextButton.text          = nextButtonLabel(index, lang)
-        checkingIcon.isVisible   = false
+        explanationCard.isVisible = false
+        footerPanel.isVisible = false
+        nextButton.isVisible = false
+        nextButton.isEnabled = false
+        nextButton.text = nextButtonLabel(index, lang)
 
         revalidate()
         repaint()
+        requestFocusInWindow()
     }
 
     private fun nextButtonLabel(index: Int, lang: AppLanguage): String =
         if (index < questions.size - 1)
-            if (lang == AppLanguage.EN) "Next Question  →" else "Sonraki Soru  →"
+            if (lang == AppLanguage.EN) "Next Question →" else "Sonraki Soru →"
         else
-            if (lang == AppLanguage.EN) "See Results  →" else "Sonuçları Gör  →"
+            if (lang == AppLanguage.EN) "See Results →" else "Sonuçları Gör →"
 
-    // ── Language refresh (no index/score reset) ────────────────────────────────
-
-    /**
-     * Call when language is toggled mid-quiz.
-     * Updates visible text in-place — does NOT reset index, score, or answered state.
-     */
-    fun refreshLanguage() {
-        if (questions.isEmpty()) return
-        val q    = questions[currentIndex]
-        val lang = StateManager.getInstance().language
-
-        questionLabel.text = "<html><body style='width:100%'>${q.displayQuestion(lang)}</body></html>"
-
-        val opts = q.displayOptions(lang)
-        if (!answered) {
-            // Rebuild option cards (none are in answered state yet)
-            optionsPanel.removeAll()
-            optionCards.clear()
-            listOf("A", "B", "C", "D").forEach { key ->
-                val text = opts[key] ?: return@forEach
-                val card = OptionCard(key = key, text = text) { onOptionSelected(key, q) }
-                optionCards.add(card)
-                optionsPanel.add(card)
-                optionsPanel.add(Box.createVerticalStrut(JBUI.scale(6)))
-            }
-        } else {
-            // Card is in answered state — only update text labels, keep highlight colours
-            optionCards.forEachIndexed { i, card ->
-                val text = opts[card.key] ?: return@forEachIndexed
-                card.updateText(text)
-            }
-        }
-
-        if (nextButton.isVisible) {
-            nextButton.text = nextButtonLabel(currentIndex, lang)
-        }
-
-        revalidate()
-        repaint()
-    }
-
-    // ── Answer flow ────────────────────────────────────────────────────────────
+    // ── 0ms Instant Answer Evaluation ─────────────────────────────────────────
 
     private fun onOptionSelected(key: String, question: Question) {
         if (answered) return
-        answered    = true
+        answered = true
         selectedKey = key
 
-        optionCards.forEach { it.setEnabled(false) }
-        checkingIcon.isVisible = true
+        val lang = currentLanguage()
+        val optionKeys = listOf("A", "B", "C", "D")
+        val selectedOptionIdx = optionKeys.indexOf(key.uppercase())
 
-        ApplicationManager.getApplication().executeOnPooledThread {
-            val result = runCatching { DroidleService.getInstance().verifyAnswer(question.id, key) }
-            SwingUtilities.invokeLater {
-                checkingIcon.isVisible = false
-                result.fold(
-                    onSuccess = { applyVerifiedResult(it, key, question) },
-                    onFailure = { applyLocalResult(key, question) }
-                )
-            }
-        }
-    }
-
-    private fun applyVerifiedResult(result: VerifyResponse, selected: String, question: Question) {
-        val lang = StateManager.getInstance().language
-        val xp   = result.xpEarned
-
-        if (result.isCorrect) {
-            correctCount++
-            earnedXp += xp
-        }
-
-        // Accumulate category breakdown
-        val cat = result.category.ifBlank { question.category }
-        categoryResults[cat] = CategoryResult(
-            attempted = (categoryResults[cat]?.attempted ?: 0) + 1,
-            correct   = (categoryResults[cat]?.correct   ?: 0) + (if (result.isCorrect) 1 else 0)
-        )
-
-        val explanation = when (lang) {
-            AppLanguage.EN -> result.explanation_en ?: result.explanation_tr ?: result.explanation
-            AppLanguage.TR -> result.explanation_tr ?: result.explanation
-        }
-
-        highlightCards(result.correctAnswer, selected)
-        xpChip.update(xp, result.isCorrect)
-        xpChip.isVisible = true
-        explanationPanel.show(
-            correct   = result.isCorrect,
-            text      = explanation,
-            docLinks  = result.docLinks
-        )
-        nextButton.isVisible = true
-        nextButton.isEnabled = true
-        revalidate(); repaint()
-    }
-
-    private fun applyLocalResult(selected: String, question: Question) {
-        val correctKey = question.correct_answer ?: selected
-        val isCorrect  = selected.equals(correctKey, ignoreCase = true)
-        val xp         = if (isCorrect) question.xpValue else 0
+        // 1. 0ms INSTANT local evaluation
+        val correctKey = question.resolvedCorrectAnswer ?: "A"
+        val isCorrect = key.equals(correctKey, ignoreCase = true)
+        val xp = if (isCorrect) question.xpValue else 0
 
         if (isCorrect) {
             correctCount++
             earnedXp += xp
         }
 
-        val cat = question.category
-        categoryResults[cat] = CategoryResult(
-            attempted = (categoryResults[cat]?.attempted ?: 0) + 1,
-            correct   = (categoryResults[cat]?.correct   ?: 0) + (if (isCorrect) 1 else 0)
+        // Update category stats
+        categoryResults[question.category] = CategoryResult(
+            attempted = (categoryResults[question.category]?.attempted ?: 0) + 1,
+            correct = (categoryResults[question.category]?.correct ?: 0) + (if (isCorrect) 1 else 0)
         )
 
-        val lang        = StateManager.getInstance().language
+        // Store session state for Supabase sync
+        if (currentIndex < selectedOptionsList.size) {
+            selectedOptionsList[currentIndex] = selectedOptionIdx
+        }
+
         val explanation = question.displayExplanation(lang) ?: ""
+        val answerPayload = UserAnswerPayload(
+            questionId = question.id,
+            selectedOption = key,
+            isCorrect = isCorrect,
+            correctAnswer = correctKey,
+            answeredAt = Instant.now().toString(),
+            category = question.category,
+            difficulty = question.difficulty,
+            xpEarned = xp,
+            explanation = explanation,
+            explanation_tr = question.explanation_tr,
+            explanation_en = question.explanation_en
+        )
+        answersMap[question.id] = answerPayload
 
-        highlightCards(correctKey, selected)
-        xpChip.update(xp, isCorrect)
-        xpChip.isVisible = true
-        explanationPanel.show(correct = isCorrect, text = explanation, docLinks = question.doc_links)
-        nextButton.isVisible = true
-        nextButton.isEnabled = true
-        revalidate(); repaint()
-    }
-
-    private fun highlightCards(correctKey: String, selectedKey: String) {
+        // 2. 0ms INSTANT UI highlight
         optionCards.forEach { card ->
             card.applyAnswerState(
-                isCorrect  = card.key.equals(correctKey,  ignoreCase = true),
-                isSelected = card.key.equals(selectedKey, ignoreCase = true)
+                isCorrect = card.key.equals(correctKey, ignoreCase = true),
+                isSelected = card.key.equals(key, ignoreCase = true)
+            )
+            card.isEnabled = false
+        }
+
+        explanationCard.show(
+            correct = isCorrect,
+            text = explanation,
+            earnedXp = xp,
+            docLinks = question.doc_links,
+            isEnglish = (lang == AppLanguage.EN)
+        )
+
+        footerPanel.isVisible = true
+        nextButton.isVisible = true
+        nextButton.isEnabled = true
+        revalidate()
+        repaint()
+
+        // Smoothly ensure explanation card and next button are visible
+        SwingUtilities.invokeLater {
+            explanationCard.scrollRectToVisible(Rectangle(0, 0, explanationCard.width, explanationCard.height))
+        }
+
+        // 3. Background asynchronous sync (Instant progress to Supabase + server verification)
+        ApplicationManager.getApplication().executeOnPooledThread {
+            // A: Sync instant progress to Supabase daily_submissions
+            syncPartialProgressToSupabase()
+
+            // B: Verify answer with server API for anti-cheat verification / enriched doc links
+            try {
+                val response = DroidleService.getInstance().verifyAnswer(question.id, key)
+                SwingUtilities.invokeLater {
+                    // Update doc links from server if available
+                    if (response.docLinks.isNotEmpty()) {
+                        explanationCard.show(
+                            correct = isCorrect,
+                            text = explanation,
+                            earnedXp = xp,
+                            docLinks = response.docLinks
+                        )
+                    }
+                }
+            } catch (_: Exception) {
+                // Ignore API verification error since local evaluation is already rendered
+            }
+        }
+    }
+
+    /**
+     * Pushes partial progress to Supabase daily_submissions table so the user
+     * can switch to the web app on question 3 and immediately resume from question 3.
+     */
+    private fun syncPartialProgressToSupabase() {
+        val state = try { StateManager.getInstance() } catch (_: Throwable) { null } ?: return
+        val today = state.todayIstanbulString()
+
+        // Keep local state in sync on each partial answer
+        state.savePartialSession(
+            today = state.todayIstanbul(),
+            score = correctCount,
+            earnedXp = earnedXp,
+            selectedOptions = selectedOptionsList.toList(),
+            answers = answersMap.toMap()
+        )
+
+        val userId = state.getUserId() ?: return
+
+        val payload = DailySubmissionPayload(
+            user_id = userId,
+            date = today,
+            score = correctCount,
+            earned_xp = earnedXp,
+            answers = answersMap.toMap(),
+            selected_options = selectedOptionsList.toList()
+        )
+
+        SupabaseService.getInstance().upsertDailySubmission(payload)
+    }
+
+    fun refreshLanguage() {
+        if (questions.isEmpty()) return
+        val q = questions[currentIndex]
+        val lang = currentLanguage()
+
+        questionLabel.text = TextFormatter.formatQuestionHtml(q.displayQuestion(lang))
+        val opts = q.displayOptions(lang)
+
+        optionCards.forEach { card ->
+            val text = opts[card.key] ?: return@forEach
+            card.updateText(text)
+        }
+
+        if (answered) {
+            val explanation = q.displayExplanation(lang) ?: ""
+            val isCorrect = selectedKey.equals(q.resolvedCorrectAnswer, ignoreCase = true)
+            explanationCard.show(
+                correct = isCorrect,
+                text = explanation,
+                earnedXp = if (isCorrect) q.xpValue else 0,
+                docLinks = q.doc_links,
+                isEnglish = (lang == AppLanguage.EN)
             )
         }
+
+        nextButton.text = nextButtonLabel(currentIndex, lang)
+        revalidate()
+        repaint()
     }
 
     private fun advance() {
         val next = currentIndex + 1
         if (next >= questions.size) {
-            onComplete(correctCount, questions, earnedXp, categoryResults)
+            onComplete(
+                correctCount,
+                questions,
+                earnedXp,
+                selectedOptionsList.toList(),
+                answersMap.toMap(),
+                categoryResults.toMap()
+            )
         } else {
             showQuestion(next)
         }
-    }
-}
-
-// ── Option card ────────────────────────────────────────────────────────────────
-
-private enum class OptionState { DEFAULT, HOVER, CORRECT, WRONG }
-
-private class OptionCard(
-    val key: String,
-    text: String,
-    onClick: (String) -> Unit
-) : JPanel(BorderLayout(JBUI.scale(10), 0)) {
-
-    private var state: OptionState = OptionState.DEFAULT
-
-    private val keyLabel = JBLabel(key).apply {
-        font = JBUI.Fonts.label(12f).deriveFont(Font.BOLD)
-        preferredSize       = Dimension(JBUI.scale(22), JBUI.scale(22))
-        horizontalAlignment = SwingConstants.CENTER
-        verticalAlignment   = SwingConstants.CENTER
-    }
-    val textLabel = JBLabel("<html><body style='width:100%'>$text</body></html>")
-
-    init {
-        border     = CompoundBorder(
-            RoundedLineBorder(borderColor(), JBUI.scale(6)),
-            JBUI.Borders.empty(JBUI.scale(9), JBUI.scale(10))
-        )
-        isOpaque   = false
-        cursor     = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-        alignmentX = Component.LEFT_ALIGNMENT
-
-        add(keyLabel,  BorderLayout.WEST)
-        add(textLabel, BorderLayout.CENTER)
-
-        addMouseListener(object : MouseAdapter() {
-            override fun mouseEntered(e: MouseEvent) {
-                if (state == OptionState.DEFAULT) { state = OptionState.HOVER; repaint() }
-            }
-            override fun mouseExited(e: MouseEvent) {
-                if (state == OptionState.HOVER) { state = OptionState.DEFAULT; repaint() }
-            }
-            override fun mouseClicked(e: MouseEvent) { if (isEnabled) onClick(key) }
-        })
-    }
-
-    fun applyAnswerState(isCorrect: Boolean, isSelected: Boolean) {
-        state = when {
-            isCorrect                -> OptionState.CORRECT
-            isSelected && !isCorrect -> OptionState.WRONG
-            else                     -> OptionState.DEFAULT
-        }
-        repaint()
-    }
-
-    fun updateText(newText: String) {
-        textLabel.text = "<html><body style='width:100%'>$newText</body></html>"
-        revalidate(); repaint()
-    }
-
-    override fun getMaximumSize(): Dimension = Dimension(Int.MAX_VALUE, preferredSize.height)
-
-    override fun paintComponent(g: Graphics) {
-        val g2 = g as Graphics2D
-        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-        g2.color = bgColor()
-        g2.fillRoundRect(0, 0, width, height, JBUI.scale(6), JBUI.scale(6))
-        super.paintComponent(g)
-        border             = CompoundBorder(
-            RoundedLineBorder(borderColor(), JBUI.scale(6)),
-            JBUI.Borders.empty(JBUI.scale(9), JBUI.scale(10))
-        )
-        keyLabel.foreground  = keyFg()
-        textLabel.foreground = textFg()
-    }
-
-    private fun bgColor() = when (state) {
-        OptionState.DEFAULT -> JBColor(Color(0xF9F9F9), Color(0x2A2A2A))
-        OptionState.HOVER   -> JBColor(Color(0xEDFDF8), Color(0x1E3A2F))
-        OptionState.CORRECT -> JBColor(Color(0xDCFCE7), Color(0x14532D))
-        OptionState.WRONG   -> JBColor(Color(0xFEE2E2), Color(0x450A0A))
-    }
-    private fun borderColor() = when (state) {
-        OptionState.DEFAULT -> JBColor(Color(0xE4E4E7), Color(0x3F3F46))
-        OptionState.HOVER   -> JBColor(Color(0x10B981), Color(0x059669))
-        OptionState.CORRECT -> JBColor(Color(0x22C55E), Color(0x16A34A))
-        OptionState.WRONG   -> JBColor(Color(0xEF4444), Color(0xDC2626))
-    }
-    private fun keyFg() = when (state) {
-        OptionState.CORRECT -> JBColor(Color(0x15803D), Color(0x4ADE80))
-        OptionState.WRONG   -> JBColor(Color(0xB91C1C), Color(0xF87171))
-        else                -> JBUI.CurrentTheme.Label.foreground()
-    }
-    private fun textFg() = when (state) {
-        OptionState.DEFAULT, OptionState.HOVER -> JBUI.CurrentTheme.Label.foreground()
-        else                                   -> keyFg()
-    }
-}
-
-// ── XP chip (post-answer feedback) ────────────────────────────────────────────
-
-private class XpChip(private var xp: Int) : JComponent() {
-
-    private val green = Color(0x10, 0xB9, 0x81)
-    private val red   = Color(0xEF, 0x44, 0x44)
-    private var correct = false
-
-    private val arc  = JBUI.scale(12)
-    private val hPad = JBUI.scale(10)
-    private val vPad = JBUI.scale(4)
-
-    init {
-        font      = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
-        alignmentX = Component.LEFT_ALIGNMENT
-        updateSize()
-    }
-
-    fun update(newXp: Int, isCorrect: Boolean) {
-        xp      = newXp
-        correct = isCorrect
-        updateSize()
-        repaint()
-    }
-
-    private fun label() = if (correct) "+${xp} XP" else "0 XP"
-
-    private fun updateSize() {
-        val fm = getFontMetrics(font ?: JBUI.Fonts.smallFont().deriveFont(Font.BOLD))
-        val w  = fm.stringWidth(label()) + hPad * 2
-        val h  = fm.height + vPad * 2
-        preferredSize = Dimension(w, h)
-        minimumSize   = preferredSize
-    }
-
-    override fun paintComponent(g: Graphics) {
-        val g2   = g as Graphics2D
-        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-        g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
-        val col  = if (correct) green else red
-        g2.color = Color(col.red, col.green, col.blue, 20)
-        g2.fillRoundRect(0, 0, width, height, arc, arc)
-        g2.color = Color(col.red, col.green, col.blue, 160)
-        g2.stroke = BasicStroke(1f)
-        g2.drawRoundRect(0, 0, width - 1, height - 1, arc, arc)
-        g2.color = col
-        g2.font  = font ?: JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
-        val fm   = g2.fontMetrics
-        val text = label()
-        val tx   = (width - fm.stringWidth(text)) / 2
-        val ty   = (height + fm.ascent - fm.descent) / 2
-        g2.drawString(text, tx, ty)
-    }
-}
-
-// ── Explanation panel ──────────────────────────────────────────────────────────
-
-private class ExplanationPanel : JPanel() {
-
-    private val iconLabel  = JBLabel()
-    private val textLabel  = JBLabel()
-    private val linksPanel = JPanel().apply {
-        layout   = FlowLayout(FlowLayout.LEFT, JBUI.scale(6), 0)
-        isOpaque = false
-    }
-
-    init {
-        layout     = BoxLayout(this, BoxLayout.Y_AXIS)
-        isOpaque   = false
-        alignmentX = Component.LEFT_ALIGNMENT
-
-        val topRow = JPanel(BorderLayout(JBUI.scale(8), 0)).apply {
-            isOpaque   = false
-            alignmentX = Component.LEFT_ALIGNMENT
-            add(iconLabel, BorderLayout.WEST)
-            add(textLabel, BorderLayout.CENTER)
-        }
-        textLabel.font = JBUI.Fonts.smallFont()
-
-        add(topRow)
-        add(Box.createVerticalStrut(JBUI.scale(6)))
-        add(linksPanel)
-    }
-
-    fun show(correct: Boolean, text: String, docLinks: List<DocLink> = emptyList()) {
-        iconLabel.icon       = if (correct) AllIcons.General.InspectionsOK else AllIcons.General.BalloonError
-        textLabel.text       = "<html><body style='width:100%'>$text</body></html>"
-        textLabel.foreground = if (correct)
-            JBColor(Color(0x15803D), Color(0x4ADE80))
-        else
-            JBColor(Color(0xB91C1C), Color(0xF87171))
-
-        linksPanel.removeAll()
-        if (docLinks.isNotEmpty()) {
-            linksPanel.add(JBLabel("Kaynaklar:").apply {
-                font       = JBUI.Fonts.smallFont()
-                foreground = JBUI.CurrentTheme.Label.disabledForeground()
-            })
-            docLinks.forEach { link ->
-                linksPanel.add(JButton(link.title).apply {
-                    font                = JBUI.Fonts.smallFont()
-                    isBorderPainted     = false
-                    isContentAreaFilled = false
-                    isFocusPainted      = false
-                    foreground          = JBColor(Color(0x2563EB), Color(0x60A5FA))
-                    cursor              = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-                    toolTipText         = link.url
-                    addActionListener { BrowserUtil.browse(link.url) }
-                    addMouseListener(object : MouseAdapter() {
-                        override fun mouseEntered(e: MouseEvent) {
-                            foreground = JBColor(Color(0x1D4ED8), Color(0x93C5FD))
-                        }
-                        override fun mouseExited(e: MouseEvent) {
-                            foreground = JBColor(Color(0x2563EB), Color(0x60A5FA))
-                        }
-                    })
-                })
-            }
-        }
-        linksPanel.isVisible = docLinks.isNotEmpty()
-
-        isVisible = true
-        revalidate(); repaint()
-    }
-}
-
-// ── Progress dots ──────────────────────────────────────────────────────────────
-
-private enum class DotState { TODO, ACTIVE, DONE }
-
-private class DotIndicator(state: DotState) : JComponent() {
-    private val dotState = state
-    private val size     = JBUI.scale(8)
-
-    init {
-        preferredSize = Dimension(size, size)
-        minimumSize   = preferredSize
-        maximumSize   = preferredSize
-    }
-
-    override fun paintComponent(g: Graphics) {
-        val g2 = g as Graphics2D
-        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-        g2.color = when (dotState) {
-            DotState.ACTIVE -> JBColor(Color(0x10B981), Color(0x10B981))
-            DotState.DONE   -> JBColor(Color(0x6EE7B7), Color(0x34D399))
-            DotState.TODO   -> JBColor(Color(0xD4D4D8), Color(0x52525B))
-        }
-        val d   = if (dotState == DotState.ACTIVE) size else size - JBUI.scale(2)
-        val off = (size - d) / 2
-        g2.fillOval(off, off, d, d)
     }
 }

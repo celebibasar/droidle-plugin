@@ -42,6 +42,7 @@
         <!-- Services -->
         <applicationService serviceImplementation="app.droidle.plugin.state.StateManager"/>
         <applicationService serviceImplementation="app.droidle.plugin.service.DroidleService"/>
+        <applicationService serviceImplementation="app.droidle.plugin.service.SupabaseService"/>
         <applicationService serviceImplementation="app.droidle.plugin.settings.DroidleSettingsState"/>
         <applicationService serviceImplementation="app.droidle.plugin.auth.DroidleLocalAuthServer"/>
 

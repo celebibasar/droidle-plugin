@@ -49,12 +49,19 @@ class DroidleLocalAuthServer : AutoCloseable {
 
                 try {
                     val body = exchange.requestBody.bufferedReader().readText()
-                    // Simple JSON parse without a dependency
-                    val token    = Regex(""""token"\s*:\s*"([^"]+)"""").find(body)?.groupValues?.get(1)
-                    val username = Regex(""""username"\s*:\s*"([^"]+)"""").find(body)?.groupValues?.get(1)
+                    // Simple JSON parse without extra dependencies
+                    val token     = Regex(""""token"\s*:\s*"([^"]+)"""").find(body)?.groupValues?.get(1)
+                    val username  = Regex(""""username"\s*:\s*"([^"]+)"""").find(body)?.groupValues?.get(1)
+                    val userId    = Regex(""""userId"\s*:\s*"([^"]+)"""").find(body)?.groupValues?.get(1)
+                    val avatarUrl = Regex(""""avatarUrl"\s*:\s*"([^"]+)"""").find(body)?.groupValues?.get(1)
 
                     if (token != null) {
-                        DroidleAuthProtocolHandler.onTokenReceived(token, username)
+                        DroidleAuthProtocolHandler.onTokenReceived(
+                            token = token,
+                            username = username,
+                            userId = userId,
+                            avatarUrl = avatarUrl
+                        )
                         val response = """{"ok":true}"""
                         exchange.responseHeaders.add("Content-Type", "application/json")
                         exchange.sendResponseHeaders(200, response.length.toLong())

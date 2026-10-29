@@ -39,16 +39,32 @@ object DroidleAuthProtocolHandler {
     const val CALLBACK_PORT = 62330
 
     /** Called by DroidleLocalAuthServer when the web page posts a token. */
-    fun onTokenReceived(token: String, username: String?) {
+    fun onTokenReceived(
+        token: String,
+        username: String? = null,
+        userId: String? = null,
+        avatarUrl: String? = null
+    ) {
         ApplicationManager.getApplication().executeOnPooledThread {
             try {
-                StateManager.getInstance().saveAuthToken(token)
-                if (username != null) {
-                    StateManager.getInstance().saveUsername(username)
+                val state = StateManager.getInstance()
+                state.saveAuthToken(token)
+                if (username != null) state.saveUsername(username)
+                if (userId != null) state.saveUserId(userId)
+                if (avatarUrl != null) state.saveAvatarUrl(avatarUrl)
+
+                // Sync remote profile from Supabase
+                val effectiveUid = state.getUserId()
+                if (!effectiveUid.isNullOrBlank()) {
+                    val profile = app.droidle.plugin.service.SupabaseService.getInstance().fetchProfile(effectiveUid)
+                    if (profile != null) {
+                        state.syncFromRemoteProfile(profile)
+                    }
                 }
+
                 ApplicationManager.getApplication().invokeLater {
-                    showSuccessNotification(username)
-                    // Broadcast so toolbar can refresh
+                    showSuccessNotification(state.getUsername())
+                    // Broadcast so toolbar and screens can refresh
                     ApplicationManager.getApplication().messageBus
                         .syncPublisher(DroidleAuthListener.TOPIC)
                         .onAuthChanged()
