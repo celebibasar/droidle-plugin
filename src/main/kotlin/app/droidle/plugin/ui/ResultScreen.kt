@@ -31,7 +31,7 @@ import javax.swing.border.CompoundBorder
  * - Category and difficulty breakdown cards.
  * - CTA button to view web leaderboard.
  */
-class ResultScreen(
+open class ResultScreen(
     private val correctCount: Int,
     private val questions: List<Question>,
     private val earnedXp: Int = 0,
@@ -229,7 +229,7 @@ class ResultScreen(
     }
 
     /** Call this when the active language changes so the result screen re-renders dynamically. */
-    fun refreshLanguage() {
+    public open fun refreshLanguage() {
         removeAll()
         buildUI()
         revalidate()
