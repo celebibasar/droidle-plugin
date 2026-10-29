@@ -319,6 +319,17 @@ open class ResultScreen(
             maximumSize = Dimension(JBUI.scale(460), Int.MAX_VALUE)
         }
 
+        var explReportBtnRef: QuestionReportButton? = null
+        val reportBtn = QuestionReportButton(
+            currentQuestion = question,
+            currentLang = lang,
+            project = project,
+            compact = false,
+            isReportedChecker = isQuestionReportedProvider
+        ) { qId ->
+            explReportBtnRef?.refreshReportedState(true)
+        }
+
         // Header
         val header = JPanel(BorderLayout()).apply {
             isOpaque = false
@@ -342,13 +353,6 @@ open class ResultScreen(
             val headerEast = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(8), 0)).apply {
                 isOpaque = false
                 add(statusBadge)
-                val reportBtn = QuestionReportButton(
-                    currentQuestion = question,
-                    currentLang = lang,
-                    project = project,
-                    compact = false,
-                    isReportedChecker = isQuestionReportedProvider
-                )
                 add(reportBtn)
             }
             add(title, BorderLayout.WEST)
@@ -476,7 +480,10 @@ open class ResultScreen(
                         project = project,
                         compact = false,
                         isReportedChecker = isQuestionReportedProvider
-                    )
+                    ) { qId ->
+                        reportBtn.refreshReportedState(true)
+                    }
+                    explReportBtnRef = explReportBtn
                     add(explReportBtn)
                 }
                 add(vGap(6))

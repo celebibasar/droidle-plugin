@@ -147,7 +147,7 @@ class QuestionReportDialog(
             alignmentX = Component.LEFT_ALIGNMENT
         }
 
-        ReportReason.values().forEachIndexed { index, reason ->
+        ReportReason.entries.forEachIndexed { index, reason ->
             val rb = JRadioButton(reason.localizedLabel(lang)).apply {
                 isSelected = (index == 0)
                 isOpaque = false
@@ -158,7 +158,7 @@ class QuestionReportDialog(
             radioGroup.add(rb)
             radioButtons[reason] = rb
             reasonsPanel.add(rb)
-            if (index < ReportReason.values().size - 1) {
+            if (index < ReportReason.entries.size - 1) {
                 reasonsPanel.add(Box.createVerticalStrut(JBUI.scale(2)))
             }
         }
@@ -245,6 +245,11 @@ class QuestionReportDialog(
         return null
     }
 
+    override fun doCancelAction() {
+        if (isSubmitting) return
+        super.doCancelAction()
+    }
+
     override fun doOKAction() {
         if (isSubmitting || alreadyReported) return
 
@@ -253,6 +258,7 @@ class QuestionReportDialog(
 
         isSubmitting = true
         isOKActionEnabled = false
+        cancelAction.isEnabled = false
         setOKButtonText(if (lang == AppLanguage.EN) "Submitting..." else "Gönderiliyor...")
 
         val executeSubmission = {
@@ -265,6 +271,17 @@ class QuestionReportDialog(
             )
 
             SwingUtilities.invokeLater {
+                if (isDisposed) {
+                    if (success) {
+                        try {
+                            StateManager.getInstance().markQuestionAsReported(question.id)
+                        } catch (_: Throwable) {}
+                        showSuccessNotification(project, lang)
+                        onSuccess?.invoke(question.id)
+                    }
+                    return@invokeLater
+                }
+
                 if (success) {
                     try {
                         StateManager.getInstance().markQuestionAsReported(question.id)
@@ -275,6 +292,7 @@ class QuestionReportDialog(
                 } else {
                     isSubmitting = false
                     isOKActionEnabled = true
+                    cancelAction.isEnabled = true
                     setOKButtonText(if (lang == AppLanguage.EN) "Submit Report" else "Bildirimi Gönder")
                     val errorMsg = if (lang == AppLanguage.EN)
                         "An error occurred while submitting your report."
@@ -282,8 +300,9 @@ class QuestionReportDialog(
                         "Bildirim gönderilirken bir hata oluştu."
                     errorLabel.text = errorMsg
                     errorBanner.isVisible = true
-                    rootPane.revalidate()
-                    rootPane.repaint()
+                    pack()
+                    rootPane?.revalidate()
+                    rootPane?.repaint()
                     showErrorNotification(project, lang)
                     onError?.invoke(errorMsg)
                 }

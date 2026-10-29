@@ -305,8 +305,9 @@ class SupabaseService {
         val token = StateManager.getInstance().getAuthToken()
         val url = "$supabaseUrl/rest/v1/question_reports"
 
-        // Ensure userId is a valid UUID to prevent Postgres type error, or null
-        val effectiveUserId = userId?.trim()?.takeIf { UUID_REGEX.matches(it) }
+        // Ensure userId is a valid UUID to prevent Postgres type error, or fallback to current user
+        val rawUserId = userId ?: runCatching { StateManager.getInstance().getUserId() }.getOrNull()
+        val effectiveUserId = rawUserId?.trim()?.takeIf { UUID_REGEX.matches(it) }
         val cleanDetails = details?.trim()?.takeIf { it.isNotBlank() }?.take(2000)
 
         val payload = QuestionReportPayload(

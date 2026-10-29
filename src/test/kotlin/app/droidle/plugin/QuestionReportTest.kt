@@ -244,6 +244,7 @@ class QuestionReportTest {
         val reportBtn = buttons.firstOrNull { it.text.contains("Soruyu Bildir") }
         assertNotNull(reportBtn, "Report button pill must be present in explanation card")
         assertEquals("Soruyu Bildir ⚑", reportBtn?.text)
+        assertEquals("Soruyu bildir", reportBtn?.toolTipText)
 
         reportBtn?.doClick()
         assertTrue(reportClicked, "Clicking report pill should invoke onReportClick callback")
@@ -254,6 +255,7 @@ class QuestionReportTest {
         val reportedBtn = updatedButtons.firstOrNull { it.text.contains("Bildirildi") }
         assertNotNull(reportedBtn, "Pill must change to '✓ Bildirildi'")
         assertEquals("✓ Bildirildi", reportedBtn?.text)
+        assertEquals("Bu soru için bildirim gönderildi", reportedBtn?.toolTipText)
     }
 
     @Test
@@ -273,12 +275,47 @@ class QuestionReportTest {
         val reportBtn = buttons.firstOrNull { it.text.contains("Report Question") }
         assertNotNull(reportBtn, "Report button pill must be present in explanation card in English")
         assertEquals("Report Question ⚑", reportBtn?.text)
+        assertEquals("Report question", reportBtn?.toolTipText)
 
         card.refreshReportedState(true)
         val updatedButtons = findAllButtons(card)
         val reportedBtn = updatedButtons.firstOrNull { it.text.contains("Reported") }
         assertNotNull(reportedBtn)
         assertEquals("✓ Reported", reportedBtn?.text)
+        assertEquals("Report submitted for this question", reportedBtn?.toolTipText)
+    }
+
+    @Test
+    fun `test ResultScreen review card links header and explanation report buttons`() {
+        val reportedIds = mutableSetOf<String>()
+        val screen = ResultScreen(
+            correctCount = 1,
+            questions = listOf(sampleQuestion),
+            earnedXp = 25,
+            selectedOptions = listOf(0),
+            answers = mapOf(
+                sampleQuestion.id to UserAnswerPayload(
+                    questionId = sampleQuestion.id,
+                    selectedOption = "A",
+                    isCorrect = true,
+                    xpEarned = 25
+                )
+            ),
+            onOpenWeb = {}
+        )
+        screen.isQuestionReportedProvider = { reportedIds.contains(it) }
+        screen.overrideLanguage = AppLanguage.TR
+        screen.refreshLanguage()
+
+        val buttons = findAllButtons(screen).filterIsInstance<QuestionReportButton>()
+        assertEquals(2, buttons.size, "ResultScreen review card must contain both header and explanation report buttons")
+        val headerBtn = buttons[0]
+        val explBtn = buttons[1]
+
+        assertEquals("⚑ Bildir", headerBtn.text)
+        assertEquals("⚑ Bildir", explBtn.text)
+        assertFalse(headerBtn.getIsReported())
+        assertFalse(explBtn.getIsReported())
     }
 
     @Test

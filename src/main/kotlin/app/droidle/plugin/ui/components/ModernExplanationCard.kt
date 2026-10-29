@@ -102,6 +102,7 @@ class ModernExplanationCard : JPanel() {
             text = if (isReported) (if (currentIsEnglish) "✓ Reported" else "✓ Bildirildi")
                    else (if (currentIsEnglish) "Report Question ⚑" else "Soruyu Bildir ⚑"),
             isReported = isReported,
+            isEnglish = currentIsEnglish,
             onClick = {
                 if (!isReported) {
                     onReport.invoke()
@@ -245,6 +246,7 @@ class ModernExplanationCard : JPanel() {
     private class ReportLinkPill(
         text: String,
         private val isReported: Boolean,
+        private val isEnglish: Boolean,
         onClick: () -> Unit
     ) : JButton(text) {
         private var hovered = false
@@ -255,7 +257,11 @@ class ModernExplanationCard : JPanel() {
             isContentAreaFilled = false
             isFocusPainted = false
             cursor = if (isReported) Cursor.getDefaultCursor() else Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-            toolTipText = if (isReported) "Bu soru için bildirim gönderildi" else "Soruyu bildir"
+            toolTipText = if (isReported) {
+                if (isEnglish) "Report submitted for this question" else "Bu soru için bildirim gönderildi"
+            } else {
+                if (isEnglish) "Report question" else "Soruyu bildir"
+            }
             foreground = if (isReported) JBColor(Color(0x059669), Color(0x34D399))
                          else JBColor(Color(0xF43F5E), Color(0xFB7185))
             border = JBUI.Borders.empty(JBUI.scale(4), JBUI.scale(10))
