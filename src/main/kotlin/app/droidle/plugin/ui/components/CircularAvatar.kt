@@ -1,5 +1,6 @@
 package app.droidle.plugin.ui.components
 
+import app.droidle.plugin.state.AppLanguage
 import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.ui.JBColor
@@ -24,16 +25,20 @@ object AvatarImageCache {
         val cached = memoryCache[url]
         if (cached != null) return cached
 
-        ApplicationManager.getApplication().executeOnPooledThread {
-            try {
-                val img = ImageIO.read(URL(url))
-                if (img != null) {
-                    memoryCache[url] = img
-                    SwingUtilities.invokeLater { onLoaded(img) }
+        try {
+            ApplicationManager.getApplication()?.executeOnPooledThread {
+                try {
+                    val img = ImageIO.read(URL(url))
+                    if (img != null) {
+                        memoryCache[url] = img
+                        SwingUtilities.invokeLater { onLoaded(img) }
+                    }
+                } catch (_: Exception) {
+                    // Ignore avatar image network failure
                 }
-            } catch (_: Exception) {
-                // Ignore avatar image network failure
             }
+        } catch (_: Throwable) {
+            // Ignore if ApplicationManager is not initialized
         }
         return null
     }
@@ -45,6 +50,7 @@ object AvatarImageCache {
 class CircularAvatar(
     var avatarUrl: String?,
     var username: String?,
+    var lang: AppLanguage = AppLanguage.TR,
     private val onLogout: () -> Unit
 ) : JComponent() {
 
@@ -57,6 +63,8 @@ class CircularAvatar(
         maximumSize   = preferredSize
         cursor        = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
         isOpaque      = false
+
+        updateToolTip()
 
         if (!avatarUrl.isNullOrBlank()) {
             AvatarImageCache.getOrLoad(avatarUrl!!) { repaint() }
@@ -77,38 +85,63 @@ class CircularAvatar(
         })
     }
 
-    fun updateProfile(newAvatarUrl: String?, newUsername: String?) {
+    internal fun updateToolTip() {
+        val isEn = lang == AppLanguage.EN
+        toolTipText = if (isEn) {
+            username?.let { "Profile (@$it)" } ?: "Profile"
+        } else {
+            username?.let { "Profil (@$it)" } ?: "Profil"
+        }
+    }
+
+    fun updateProfile(newAvatarUrl: String?, newUsername: String?, newLang: AppLanguage = lang) {
         avatarUrl = newAvatarUrl
         username = newUsername
+        lang = newLang
+        updateToolTip()
         if (!avatarUrl.isNullOrBlank()) {
             AvatarImageCache.getOrLoad(avatarUrl!!) { repaint() }
         }
         repaint()
     }
 
+    fun getLeaderboardText(language: AppLanguage = lang): String =
+        if (language == AppLanguage.EN) "Leaderboard" else "Liderlik Tablosu"
+
+    fun getLogoutText(language: AppLanguage = lang): String =
+        if (language == AppLanguage.EN) "Sign Out" else "Çıkış Yap"
+
+    fun getProfileFallbackText(language: AppLanguage = lang): String =
+        if (language == AppLanguage.EN) "My Profile" else "Profilim"
+
     private fun showMenu(invoker: Component, x: Int, y: Int) {
+        val menu = createPopupMenu()
+        menu.show(invoker, x, y)
+    }
+
+    internal fun createPopupMenu(): JPopupMenu {
         val menu = JPopupMenu()
 
-        val userItem = JMenuItem(username?.let { "@$it" } ?: "Profilim").apply {
+        val userItem = JMenuItem(username?.let { "@$it" } ?: getProfileFallbackText(lang)).apply {
             isEnabled = false
             font = JBUI.Fonts.smallFont().deriveFont(Font.BOLD)
         }
         menu.add(userItem)
         menu.addSeparator()
 
-        val leaderboardItem = JMenuItem("Liderlik Tablosu").apply {
+        val leaderboardItem = JMenuItem(getLeaderboardText(lang)).apply {
             font = JBUI.Fonts.smallFont()
             addActionListener { BrowserUtil.browse("https://droidle.vercel.app/leaderboard") }
         }
         menu.add(leaderboardItem)
 
-        val logoutItem = JMenuItem("Çıkış Yap").apply {
+        val logoutItem = JMenuItem(getLogoutText(lang)).apply {
             font = JBUI.Fonts.smallFont()
             addActionListener { onLogout() }
         }
         menu.add(logoutItem)
 
-        menu.show(invoker, x, y)
+        return menu
     }
 
     override fun paintComponent(g: Graphics) {

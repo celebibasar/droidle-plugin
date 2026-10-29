@@ -2,9 +2,12 @@ package app.droidle.plugin
 
 import app.droidle.plugin.model.DocLink
 import app.droidle.plugin.model.Question
+import app.droidle.plugin.state.AppLanguage
 import app.droidle.plugin.ui.QuizScreen
 import app.droidle.plugin.ui.TextFormatter
 import app.droidle.plugin.ui.components.AutoWrappingHtmlLabel
+import app.droidle.plugin.ui.components.CircularAvatar
+import app.droidle.plugin.ui.components.CompactHeader
 import app.droidle.plugin.ui.components.ModernCodeSnippet
 import app.droidle.plugin.ui.components.ModernExplanationCard
 import app.droidle.plugin.ui.components.ModernOptionCard
@@ -15,6 +18,7 @@ import java.awt.Component
 import java.awt.Dimension
 import com.intellij.ui.components.JBTextArea
 import javax.swing.JFrame
+import javax.swing.JMenuItem
 import javax.swing.JPanel
 import javax.swing.JComponent
 import javax.swing.JScrollPane
@@ -318,5 +322,144 @@ class LayoutAndFormattingTest {
         }
         assertEquals(expectedLeftX, optionsPanel.x, "Options panel must start at left border inset")
         assertTrue(optionsPanel.width >= 400, "Options panel width was ${optionsPanel.width}, expected >= 400")
+    }
+
+    @Test
+    fun `test CircularAvatar popup menu and tooltip localization in Turkish and English`() {
+        // 1. Turkish with username
+        val avatarTr = CircularAvatar(
+            avatarUrl = null,
+            username = "droidledev",
+            lang = AppLanguage.TR,
+            onLogout = {}
+        )
+        assertEquals("Profil (@droidledev)", avatarTr.toolTipText)
+        val menuTr = avatarTr.createPopupMenu()
+        val itemsTr = (0 until menuTr.componentCount).mapNotNull { menuTr.getComponent(it) as? JMenuItem }
+        assertEquals(3, itemsTr.size)
+        assertEquals("@droidledev", itemsTr[0].text)
+        assertFalse(itemsTr[0].isEnabled)
+        assertEquals("Liderlik Tablosu", itemsTr[1].text)
+        assertEquals("Çıkış Yap", itemsTr[2].text)
+
+        // 2. Turkish without username (fallback)
+        val avatarTrNullUser = CircularAvatar(
+            avatarUrl = null,
+            username = null,
+            lang = AppLanguage.TR,
+            onLogout = {}
+        )
+        assertEquals("Profil", avatarTrNullUser.toolTipText)
+        val menuTrNull = avatarTrNullUser.createPopupMenu()
+        val itemsTrNull = (0 until menuTrNull.componentCount).mapNotNull { menuTrNull.getComponent(it) as? JMenuItem }
+        assertEquals("Profilim", itemsTrNull[0].text)
+
+        // 3. English with username
+        val avatarEn = CircularAvatar(
+            avatarUrl = null,
+            username = "droidledev",
+            lang = AppLanguage.EN,
+            onLogout = {}
+        )
+        assertEquals("Profile (@droidledev)", avatarEn.toolTipText)
+        val menuEn = avatarEn.createPopupMenu()
+        val itemsEn = (0 until menuEn.componentCount).mapNotNull { menuEn.getComponent(it) as? JMenuItem }
+        assertEquals(3, itemsEn.size)
+        assertEquals("@droidledev", itemsEn[0].text)
+        assertFalse(itemsEn[0].isEnabled)
+        assertEquals("Leaderboard", itemsEn[1].text)
+        assertEquals("Sign Out", itemsEn[2].text)
+
+        // 4. English without username (fallback)
+        val avatarEnNullUser = CircularAvatar(
+            avatarUrl = null,
+            username = null,
+            lang = AppLanguage.EN,
+            onLogout = {}
+        )
+        assertEquals("Profile", avatarEnNullUser.toolTipText)
+        val menuEnNull = avatarEnNullUser.createPopupMenu()
+        val itemsEnNull = (0 until menuEnNull.componentCount).mapNotNull { menuEnNull.getComponent(it) as? JMenuItem }
+        assertEquals("My Profile", itemsEnNull[0].text)
+
+        // 5. Dynamic updateProfile with language change
+        avatarTr.updateProfile(newAvatarUrl = "https://example.com/avatar.png", newUsername = "alice", newLang = AppLanguage.EN)
+        assertEquals("Profile (@alice)", avatarTr.toolTipText)
+        val updatedMenu = avatarTr.createPopupMenu()
+        val updatedItems = (0 until updatedMenu.componentCount).mapNotNull { updatedMenu.getComponent(it) as? JMenuItem }
+        assertEquals("@alice", updatedItems[0].text)
+        assertEquals("Leaderboard", updatedItems[1].text)
+        assertEquals("Sign Out", updatedItems[2].text)
+    }
+
+    @Test
+    fun `test CompactHeader components and tooltips localization across language switches`() {
+        val header = CompactHeader(
+            onLanguageToggle = {},
+            onLoginClick = {},
+            onLogoutClick = {}
+        )
+
+        // Initial state configured as Turkish (logged out, streak 3)
+        header.overrideLanguage = AppLanguage.TR
+        header.overrideLoggedIn = false
+        header.overrideStreak = 3
+        header.refresh()
+
+        assertEquals("Giriş Yap", header.loginButton.text, "Login button text must be 'Giriş Yap' in TR")
+        assertEquals("GitHub ile giriş yap", header.loginButton.toolTipText, "Login button tooltip must be in TR")
+        assertTrue(header.loginButton.isVisible, "Login button must be visible when logged out")
+        assertFalse(header.avatar.isVisible, "Avatar must be hidden when logged out")
+        assertEquals("TR", header.langButton.text)
+        assertEquals("Dil Değiştir", header.langButton.toolTipText)
+        assertEquals("droidle web uygulamasını aç", header.leftPanel.toolTipText)
+        assertEquals("3 günlük seri", header.streakPill.toolTipText)
+
+        // Switch to English (logged in as 'basar', streak 5)
+        header.overrideLanguage = AppLanguage.EN
+        header.overrideLoggedIn = true
+        header.overrideUsername = "basar"
+        header.overrideStreak = 5
+        header.refresh()
+
+        assertEquals("Sign In", header.loginButton.text, "Login button text must be 'Sign In' in EN")
+        assertEquals("Sign in with GitHub", header.loginButton.toolTipText, "Login button tooltip must be in EN")
+        assertFalse(header.loginButton.isVisible, "Login button must be hidden when logged in")
+        assertTrue(header.avatar.isVisible, "Avatar must be visible when logged in")
+        assertEquals("Profile (@basar)", header.avatar.toolTipText, "Avatar tooltip must be in EN")
+        assertEquals("EN", header.langButton.text)
+        assertEquals("Switch Language", header.langButton.toolTipText)
+        assertEquals("Open droidle web app", header.leftPanel.toolTipText)
+        assertEquals("5 days streak", header.streakPill.toolTipText)
+
+        // Check popup menu on the header avatar in English
+        val popupMenuEn = header.avatar.createPopupMenu()
+        val menuItemsEn = (0 until popupMenuEn.componentCount).mapNotNull { popupMenuEn.getComponent(it) as? JMenuItem }
+        assertEquals(3, menuItemsEn.size)
+        assertEquals("@basar", menuItemsEn[0].text)
+        assertEquals("Leaderboard", menuItemsEn[1].text)
+        assertEquals("Sign Out", menuItemsEn[2].text)
+
+        // Test streak 1 day singular in EN
+        header.overrideStreak = 1
+        header.refresh()
+        assertEquals("1 day streak", header.streakPill.toolTipText, "Singular streak should say '1 day streak'")
+
+        // Switch back to Turkish while still logged in
+        header.overrideLanguage = AppLanguage.TR
+        header.overrideStreak = 1
+        header.refresh()
+
+        assertEquals("TR", header.langButton.text)
+        assertEquals("Dil Değiştir", header.langButton.toolTipText)
+        assertEquals("droidle web uygulamasını aç", header.leftPanel.toolTipText)
+        assertEquals("1 günlük seri", header.streakPill.toolTipText)
+        assertEquals("Profil (@basar)", header.avatar.toolTipText)
+
+        val popupMenuTr = header.avatar.createPopupMenu()
+        val menuItemsTr = (0 until popupMenuTr.componentCount).mapNotNull { popupMenuTr.getComponent(it) as? JMenuItem }
+        assertEquals("@basar", menuItemsTr[0].text)
+        assertEquals("Liderlik Tablosu", menuItemsTr[1].text)
+        assertEquals("Çıkış Yap", menuItemsTr[2].text)
     }
 }

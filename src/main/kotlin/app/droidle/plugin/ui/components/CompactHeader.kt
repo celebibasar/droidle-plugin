@@ -22,16 +22,23 @@ import javax.swing.border.CompoundBorder
  * Left: Minimalist `droidle.` logo + glowing emerald dot.
  * Right: Pill-shaped 🔥 Streak badge, TR | EN language toggle, and circular GitHub avatar.
  */
-class CompactHeader(
+open class CompactHeader(
     private val onLanguageToggle: () -> Unit,
     private val onLoginClick: () -> Unit,
     private val onLogoutClick: () -> Unit
 ) : JPanel(BorderLayout()) {
 
-    private val streakPill = StreakPill()
-    private val langButton: JButton
-    private val loginButton: JButton
-    private val avatar: CircularAvatar
+    var overrideLanguage: AppLanguage? = null
+    var overrideLoggedIn: Boolean? = null
+    var overrideUsername: String? = null
+    var overrideAvatarUrl: String? = null
+    var overrideStreak: Int? = null
+
+    internal val streakPill = StreakPill()
+    internal val langButton: JButton
+    internal val loginButton: JButton
+    internal val avatar: CircularAvatar
+    internal val leftPanel: JPanel
 
     init {
         isOpaque = false
@@ -43,8 +50,11 @@ class CompactHeader(
             JBUI.Borders.empty(JBUI.scale(6), JBUI.scale(10))
         )
 
+        val state = try { StateManager.getInstance() } catch (_: Throwable) { null }
+        val initialLang = overrideLanguage ?: state?.language ?: AppLanguage.TR
+
         // ── Left: Logo + Dot ──────────────────────────────────────────────────
-        val leftPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(2), 0)).apply {
+        leftPanel = JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(2), 0)).apply {
             isOpaque = false
             cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
             addMouseListener(object : MouseAdapter() {
@@ -64,10 +74,8 @@ class CompactHeader(
         }
 
         // ── Right: Streak + Lang + Avatar / Login ─────────────────────────────
-        val state = StateManager.getInstance()
-
-        langButton = JButton(state.language.label).apply {
-            toolTipText = "Dil Değiştir / Switch Language"
+        langButton = JButton(initialLang.label).apply {
+            toolTipText = if (initialLang == AppLanguage.EN) "Switch Language" else "Dil Değiştir"
             isBorderPainted = false
             isContentAreaFilled = false
             isFocusPainted = false
@@ -86,8 +94,8 @@ class CompactHeader(
             })
         }
 
-        loginButton = JButton("Giriş", AllIcons.Vcs.Vendors.Github).apply {
-            toolTipText = "GitHub ile giriş yap"
+        loginButton = JButton(if (initialLang == AppLanguage.EN) "Sign In" else "Giriş Yap", AllIcons.Vcs.Vendors.Github).apply {
+            toolTipText = if (initialLang == AppLanguage.EN) "Sign in with GitHub" else "GitHub ile giriş yap"
             isBorderPainted = false
             isContentAreaFilled = false
             isFocusPainted = false
@@ -98,8 +106,9 @@ class CompactHeader(
         }
 
         avatar = CircularAvatar(
-            avatarUrl = state.getAvatarUrl(),
-            username = state.getUsername(),
+            avatarUrl = overrideAvatarUrl ?: state?.getAvatarUrl(),
+            username = overrideUsername ?: state?.getUsername(),
+            lang = initialLang,
             onLogout = onLogoutClick
         )
 
@@ -118,17 +127,25 @@ class CompactHeader(
     }
 
     fun refresh() {
-        val state = StateManager.getInstance()
-        val loggedIn = state.isLoggedIn()
+        val state = try { StateManager.getInstance() } catch (_: Throwable) { null }
+        val currentLang = overrideLanguage ?: state?.language ?: AppLanguage.TR
+        val loggedIn = overrideLoggedIn ?: (state?.isLoggedIn() ?: false)
+        val currentStreak = overrideStreak ?: (state?.activeStreak ?: 0)
+        val currentUsername = overrideUsername ?: state?.getUsername()
+        val currentAvatarUrl = overrideAvatarUrl ?: state?.getAvatarUrl()
 
-        streakPill.setStreak(state.activeStreak)
-        langButton.text = state.language.label
+        streakPill.setStreak(currentStreak, currentLang)
+        langButton.text = currentLang.label
+        langButton.toolTipText = if (currentLang == AppLanguage.EN) "Switch Language" else "Dil Değiştir"
 
+        loginButton.text = if (currentLang == AppLanguage.EN) "Sign In" else "Giriş Yap"
+        loginButton.toolTipText = if (currentLang == AppLanguage.EN) "Sign in with GitHub" else "GitHub ile giriş yap"
         loginButton.isVisible = !loggedIn
+
         avatar.isVisible = loggedIn
-        if (loggedIn) {
-            avatar.updateProfile(state.getAvatarUrl(), state.getUsername())
-        }
+        avatar.updateProfile(currentAvatarUrl, currentUsername, currentLang)
+
+        leftPanel.toolTipText = if (currentLang == AppLanguage.EN) "Open droidle web app" else "droidle web uygulamasını aç"
 
         revalidate()
         repaint()
@@ -166,7 +183,7 @@ class CompactHeader(
     /**
      * Pill-shaped streak badge: 🔥 3
      */
-    private class StreakPill : JComponent() {
+    internal class StreakPill : JComponent() {
         private var streak: Int = 0
 
         init {
@@ -174,8 +191,13 @@ class CompactHeader(
             updateSize()
         }
 
-        fun setStreak(count: Int) {
+        fun setStreak(count: Int, lang: AppLanguage = AppLanguage.TR) {
             streak = count
+            toolTipText = if (lang == AppLanguage.EN) {
+                if (count == 1) "1 day streak" else "$count days streak"
+            } else {
+                "$count günlük seri"
+            }
             updateSize()
             repaint()
         }
