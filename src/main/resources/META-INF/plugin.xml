@@ -1,19 +1,23 @@
 <idea-plugin>
     <id>app.droidle.plugin</id>
-    <name>Droidle — Daily Android Quiz</name>
+    <name>Droidle - Daily Android Quiz</name>
     <vendor email="basarcelebi02@gmail.com" url="https://droidle.dev">Droidle</vendor>
 
     <description><![CDATA[
         <p><b>Start your Android dev day with a 5-question quiz — right inside Android Studio.</b></p>
-        <p>Droidle opens droidle.dev in a sidebar panel so you can answer today's 5 Android questions without leaving the IDE.</p>
-        <p>Topics: Jetpack Compose, Coroutines, Architecture, Android Internals, AI Prompting.</p>
-        <p>A daily reminder balloon appears when you open your project — never miss a day.</p>
+        <p>Droidle brings a native daily Android quiz tool window to your IDE, synced seamlessly with <a href="https://droidle.dev">droidle.dev</a>.</p>
+        <ul>
+            <li><b>5 Daily Questions:</b> Covers Jetpack Compose, Coroutines, Architecture, Android Internals, and AI Prompting.</li>
+            <li><b>Cross-Platform Sync:</b> Sign in with GitHub to sync your daily progress, XP, and streaks between Android Studio and the web leaderboard.</li>
+            <li><b>Bilingual Support:</b> Instant Turkish (TR) and English (EN) language toggle for questions, explanations, and reference links.</li>
+            <li><b>Daily Reminder:</b> Optional startup notification balloon so you never lose your streak.</li>
+        </ul>
     ]]></description>
 
     <change-notes><![CDATA[
         <ul>
-            <li>0.2.0 — GitHub login sync, TR/EN language toggle, source links in explanations</li>
-            <li>0.1.0 — Initial release</li>
+            <li><b>0.2.0</b> — Real-time Supabase cross-platform sync, GitHub login handoff, TR/EN language toggle, question reporting, and interactive Bugdroid result cards.</li>
+            <li><b>0.1.0</b> — Initial release.</li>
         </ul>
     ]]></change-notes>
 
@@ -38,13 +42,6 @@
             id="app.droidle.plugin.settings"
             displayName="Droidle"
         />
-
-        <!-- Services -->
-        <applicationService serviceImplementation="app.droidle.plugin.state.StateManager"/>
-        <applicationService serviceImplementation="app.droidle.plugin.service.DroidleService"/>
-        <applicationService serviceImplementation="app.droidle.plugin.service.SupabaseService"/>
-        <applicationService serviceImplementation="app.droidle.plugin.settings.DroidleSettingsState"/>
-        <applicationService serviceImplementation="app.droidle.plugin.auth.DroidleLocalAuthServer"/>
 
         <!-- Notifications -->
         <notificationGroup

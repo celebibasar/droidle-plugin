@@ -1,5 +1,6 @@
 package app.droidle.plugin.auth
 
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.Logger
@@ -20,7 +21,7 @@ import java.net.InetSocketAddress
  * Lifecycle: started on IDE startup, stopped on IDE shutdown.
  */
 @Service(Service.Level.APP)
-class DroidleLocalAuthServer : AutoCloseable {
+class DroidleLocalAuthServer : Disposable, AutoCloseable {
 
     private val LOG = Logger.getInstance(DroidleLocalAuthServer::class.java)
     private var server: HttpServer? = null
@@ -87,6 +88,10 @@ class DroidleLocalAuthServer : AutoCloseable {
         } catch (e: Exception) {
             LOG.warn("Could not start Droidle auth server (port may be in use)", e)
         }
+    }
+
+    override fun dispose() {
+        close()
     }
 
     override fun close() {

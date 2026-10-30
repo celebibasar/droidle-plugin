@@ -1,3 +1,4 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
@@ -34,23 +35,15 @@ dependencies {
 
 intellijPlatform {
     pluginConfiguration {
-        name = "Droidle — Daily Android Quiz"
+        name = "Droidle - Daily Android Quiz"
         version = providers.gradleProperty("pluginVersion")
 
         ideaVersion {
             sinceBuild = providers.gradleProperty("pluginSinceBuild")
-            untilBuild = providers.gradleProperty("pluginUntilBuild")
+            untilBuild = providers.gradleProperty("pluginUntilBuild").flatMap {
+                if (it.isBlank()) provider { null } else provider { it }
+            }
         }
-
-        description = """
-            Daily 5-question Android quiz inside Android Studio.
-            Covers Jetpack Compose, Coroutines, Architecture, Android Internals, and AI Prompting.
-            Build a streak, track your knowledge gaps, and start every dev day sharp.
-        """.trimIndent()
-
-        changeNotes = """
-            <ul><li>0.1.0 — Initial release</li></ul>
-        """.trimIndent()
     }
 
     signing {
@@ -74,7 +67,9 @@ kotlin {
 
 tasks {
     withType<KotlinCompile> {
-        kotlinOptions.jvmTarget = "17"
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_17)
+        }
     }
     withType<Test> {
         useJUnitPlatform()

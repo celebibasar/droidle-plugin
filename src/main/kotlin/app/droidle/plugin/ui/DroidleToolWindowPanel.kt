@@ -69,7 +69,7 @@ class DroidleToolWindowPanel(private val project: Project) : JPanel(BorderLayout
 
         // Listen for auth changes (login / logout) to re-sync remote state
         ApplicationManager.getApplication().messageBus
-            .connect()
+            .connect(project)
             .subscribe(DroidleAuthListener.TOPIC, DroidleAuthListener {
                 SwingUtilities.invokeLater {
                     header.refresh()
