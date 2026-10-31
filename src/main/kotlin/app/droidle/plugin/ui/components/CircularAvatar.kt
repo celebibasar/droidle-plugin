@@ -10,7 +10,7 @@ import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.awt.geom.Ellipse2D
 import java.awt.image.BufferedImage
-import java.net.URL
+import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 import javax.imageio.ImageIO
 import javax.swing.JComponent
@@ -28,7 +28,7 @@ object AvatarImageCache {
         try {
             ApplicationManager.getApplication()?.executeOnPooledThread {
                 try {
-                    val img = ImageIO.read(URL(url))
+                    val img = ImageIO.read(URI.create(url).toURL())
                     if (img != null) {
                         memoryCache[url] = img
                         SwingUtilities.invokeLater { onLoaded(img) }
