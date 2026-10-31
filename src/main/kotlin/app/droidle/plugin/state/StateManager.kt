@@ -1,8 +1,5 @@
 package app.droidle.plugin.state
 
-import com.intellij.credentialStore.CredentialAttributes
-import com.intellij.credentialStore.Credentials
-import com.intellij.ide.passwordSafe.PasswordSafe
 import com.intellij.ide.util.PropertiesComponent
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
@@ -279,22 +276,20 @@ class StateManager {
 
     // ── Auth ──────────────────────────────────────────────────────────────────
 
-    fun getAuthToken(): String? = PasswordSafe.instance.getPassword(credentialAttributes())
+    fun getAuthToken(): String? = props.getValue(KEY_AUTH_TOKEN)?.takeIf { it.isNotBlank() }
 
     fun saveAuthToken(token: String) {
-        PasswordSafe.instance.set(credentialAttributes(), Credentials("droidle", token))
+        props.setValue(KEY_AUTH_TOKEN, token)
         extractAndStoreJwtClaims(token)
     }
 
     fun clearAuthToken() {
-        PasswordSafe.instance.set(credentialAttributes(), null)
+        props.unsetValue(KEY_AUTH_TOKEN)
         clearUserId()
         clearUsername()
         clearAvatarUrl()
         clearTodaySession()
     }
-
-    private fun credentialAttributes() = CredentialAttributes("app.droidle.plugin", "github_token")
 
     private fun extractAndStoreJwtClaims(token: String) {
         try {
@@ -390,6 +385,7 @@ class StateManager {
         private const val KEY_USERNAME       = "droidle.username"
         private const val KEY_USER_ID        = "droidle.userId"
         private const val KEY_AVATAR_URL     = "droidle.avatarUrl"
+        private const val KEY_AUTH_TOKEN     = "droidle.authToken"
         private const val KEY_LANGUAGE       = "droidle.language"
         private const val KEY_TODAY_DATE     = "droidle.todayDate"
         private const val KEY_TODAY_SCORE    = "droidle.todayScore"

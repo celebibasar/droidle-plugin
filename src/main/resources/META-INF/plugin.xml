@@ -16,8 +16,7 @@
 
     <change-notes><![CDATA[
         <ul>
-            <li><b>0.2.0</b> — Real-time Supabase cross-platform sync, GitHub login handoff, TR/EN language toggle, question reporting, and interactive Bugdroid result cards.</li>
-            <li><b>0.1.0</b> — Initial release.</li>
+            <li><b>1.0.0</b> — Stable release: PropertiesComponent auth storage (no OS Keychain prompts), real-time Supabase cross-platform sync, GitHub login handoff, TR/EN language toggle, question reporting, and interactive Bugdroid result cards.</li>
         </ul>
     ]]></change-notes>
 
