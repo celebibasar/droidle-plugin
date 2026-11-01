@@ -47,24 +47,36 @@ object DroidleAuthProtocolHandler {
     ) {
         ApplicationManager.getApplication().executeOnPooledThread {
             try {
+                val cleanToken = token.trim()
                 val state = StateManager.getInstance()
-                state.saveAuthToken(token)
-                if (username != null) state.saveUsername(username)
-                if (userId != null) state.saveUserId(userId)
-                if (avatarUrl != null) state.saveAvatarUrl(avatarUrl)
+                state.saveAuthToken(cleanToken)
+                if (!username.isNullOrBlank()) state.saveUsername(username.trim())
+                if (!userId.isNullOrBlank()) state.saveUserId(userId.trim())
+                if (!avatarUrl.isNullOrBlank()) state.saveAvatarUrl(avatarUrl.trim())
+
+                val supabase = app.droidle.plugin.service.SupabaseService.getInstance()
+
+                // Fallback: resolve userId from Supabase Auth endpoint if missing
+                var effectiveUid = state.getUserId()
+                if (effectiveUid.isNullOrBlank()) {
+                    val resolvedUid = supabase.fetchUserIdFromAuth(cleanToken)
+                    if (!resolvedUid.isNullOrBlank()) {
+                        state.saveUserId(resolvedUid)
+                        effectiveUid = resolvedUid
+                    }
+                }
 
                 // Sync remote profile from Supabase
-                val effectiveUid = state.getUserId()
                 if (!effectiveUid.isNullOrBlank()) {
-                    val profile = app.droidle.plugin.service.SupabaseService.getInstance().fetchProfile(effectiveUid)
+                    val profile = supabase.fetchProfile(effectiveUid)
                     if (profile != null) {
                         state.syncFromRemoteProfile(profile)
                     }
                 }
 
-                ApplicationManager.getApplication().invokeLater {
+                javax.swing.SwingUtilities.invokeLater {
                     showSuccessNotification(state.getUsername())
-                    // Broadcast so toolbar and screens can refresh
+                    // Broadcast so toolbar and screens can refresh immediately
                     ApplicationManager.getApplication().messageBus
                         .syncPublisher(DroidleAuthListener.TOPIC)
                         .onAuthChanged()

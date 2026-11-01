@@ -16,7 +16,8 @@
 
     <change-notes><![CDATA[
         <ul>
-            <li><b>1.0.0</b> — Stable release: PropertiesComponent auth storage (no OS Keychain prompts), real-time Supabase cross-platform sync, GitHub login handoff, TR/EN language toggle, question reporting, and interactive Bugdroid result cards.</li>
+            <li><b>1.1.0</b> — Fix GitHub login handoff when already signed in on web (/plugin-success direct session transfer, dual-stack IPv4/IPv6 localhost server, and Private Network Access CORS headers).</li>
+            <li><b>1.0.0</b> — Stable release: PropertiesComponent auth storage (no OS Keychain prompts), real-time Supabase cross-platform sync, TR/EN language toggle, question reporting, and interactive Bugdroid result cards.</li>
         </ul>
     ]]></change-notes>
 

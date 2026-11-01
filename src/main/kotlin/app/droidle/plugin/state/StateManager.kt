@@ -293,9 +293,15 @@ class StateManager {
 
     private fun extractAndStoreJwtClaims(token: String) {
         try {
-            val parts = token.split(".")
+            val parts = token.trim().split(".")
             if (parts.size >= 2) {
-                val decoded = String(java.util.Base64.getUrlDecoder().decode(parts[1]), Charsets.UTF_8)
+                val rawPayload = parts[1]
+                val padded = when (rawPayload.length % 4) {
+                    2 -> "$rawPayload=="
+                    3 -> "$rawPayload="
+                    else -> rawPayload
+                }
+                val decoded = String(java.util.Base64.getUrlDecoder().decode(padded), Charsets.UTF_8)
                 val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
                 val element = json.parseToJsonElement(decoded) as? kotlinx.serialization.json.JsonObject ?: return
 
@@ -305,7 +311,8 @@ class StateManager {
                 val userMetadata = element["user_metadata"] as? kotlinx.serialization.json.JsonObject
                 val rawUsername = (userMetadata?.get("user_name") as? kotlinx.serialization.json.JsonPrimitive)?.content
                     ?: (userMetadata?.get("preferred_username") as? kotlinx.serialization.json.JsonPrimitive)?.content
-                if (!rawUsername.isNullOrBlank() && getUsername() == null) saveUsername(rawUsername)
+                    ?: (userMetadata?.get("name") as? kotlinx.serialization.json.JsonPrimitive)?.content
+                if (!rawUsername.isNullOrBlank()) saveUsername(rawUsername)
 
                 val rawAvatar = (userMetadata?.get("avatar_url") as? kotlinx.serialization.json.JsonPrimitive)?.content
                     ?: (userMetadata?.get("picture") as? kotlinx.serialization.json.JsonPrimitive)?.content

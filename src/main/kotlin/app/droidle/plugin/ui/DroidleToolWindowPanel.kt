@@ -384,7 +384,9 @@ class DroidleToolWindowPanel(private val project: Project) : JPanel(BorderLayout
     }
 
     private fun onLoginClick() {
-        BrowserUtil.browse("https://droidle.dev/login?source=plugin")
+        DroidleLocalAuthServer.getInstance().start()
+        val baseUrl = StateManager.getInstance().settings.apiBaseUrl.trimEnd('/')
+        BrowserUtil.browse("$baseUrl/plugin-success")
     }
 
     private fun onLogoutClick() {
